@@ -1,5 +1,6 @@
 import logging
 
+<<<<<<< HEAD
 
 ##########################################################
 # FUNCTIONS TO CREATE NORMAL LOGGER AND TENSORBOARD LOGGER
@@ -7,11 +8,17 @@ import logging
 
 
 # SUMMARY WRITER SAVES LOG AS EVENTFILE FOR LATER USE IN TENSORBOARD
+=======
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 from tensorboardX import SummaryWriter as _SummaryWriter
 
 from .dist import is_main_process, master_only
 
+<<<<<<< HEAD
 # CREATE LOGGER AND MAKE SURE THAT IT ONLY OUTPUTS LOG FOR MAIN PROCESS (OTHERWISE REDUNDANT OUTPUT)
+=======
+
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 def get_root_logger(log_file=None, log_level=logging.INFO):
     logger = logging.getLogger('softgroup')
     # if the logger has been initialized, just return it
@@ -30,7 +37,10 @@ def get_root_logger(log_file=None, log_level=logging.INFO):
     return logger
 
 
+<<<<<<< HEAD
 # MAKE SURE THAT SUMMARY IS ONLY WRITTEN FOR MAIN PROCESS (NOT SURE THO WHAT EXACTLY WOULD HAPPEN IF @MASTER_ONLY WOULD BE OMMITED)
+=======
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 class SummaryWriter(_SummaryWriter):
 
     @master_only

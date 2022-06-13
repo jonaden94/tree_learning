@@ -4,6 +4,7 @@ import os
 import os.path as osp
 import shutil
 import time
+<<<<<<< HEAD
 import torch
 import yaml
 import torch.nn.parallel
@@ -16,10 +17,25 @@ from softgroup.model import SoftGroup
 
 from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
                                   evaluate_semantic_miou)
+=======
+
+import torch
+import yaml
+from munch import Munch
+from softgroup.data import build_dataloader, build_dataset
+from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
+                                  evaluate_semantic_miou)
+from softgroup.model import SoftGroup
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 from softgroup.util import (AverageMeter, SummaryWriter, build_optimizer, checkpoint_save,
                             collect_results_gpu, cosine_lr_after_step, get_dist_info,
                             get_max_memory, get_root_logger, init_dist, is_main_process,
                             is_multiple, is_power2, load_checkpoint)
+<<<<<<< HEAD
+=======
+from torch.nn.parallel import DistributedDataParallel
+from tqdm import tqdm
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 
 
 def get_args():
@@ -88,7 +104,11 @@ def validate(epoch, model, val_loader, cfg, logger, writer):
     all_sem_preds, all_sem_labels, all_offset_preds, all_offset_labels = [], [], [], []
     all_inst_labels, all_pred_insts, all_gt_insts = [], [], []
     _, world_size = get_dist_info()
+<<<<<<< HEAD
     progress_bar = tqdm.tqdm(total=len(val_loader) * world_size, disable=not is_main_process())
+=======
+    progress_bar = tqdm(total=len(val_loader) * world_size, disable=not is_main_process())
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
     val_set = val_loader.dataset
     with torch.no_grad():
         model.eval()
@@ -127,6 +147,7 @@ def validate(epoch, model, val_loader, cfg, logger, writer):
         writer.add_scalar('val/Offset MAE', mae, epoch)
 
 
+<<<<<<< HEAD
 # EXECUTION STARTS HERE
 
 def main():
@@ -148,6 +169,12 @@ def main():
     # LOAD CONFIG FILE AS MUNCH DICT AND ADD SOME ENTRIES
     cfg_txt = open(args.config, 'r').read()
     cfg = munch.Munch.fromDict(yaml.safe_load(cfg_txt))
+=======
+def main():
+    args = get_args()
+    cfg_txt = open(args.config, 'r').read()
+    cfg = Munch.fromDict(yaml.safe_load(cfg_txt))
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 
     if args.dist:
         init_dist()
@@ -158,9 +185,12 @@ def main():
         cfg.work_dir = args.work_dir
     else:
         cfg.work_dir = osp.join('./work_dirs', osp.splitext(osp.basename(args.config))[0])
+<<<<<<< HEAD
 
 
     # MAKE DIRECTORY TO SAVE LOGFILES AND TENSORBOARDFILES TO AND CREATE LOGGER AND TENSORBOARDLOGGER WITH CERTAIN CHARACTERISTICS
+=======
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
     os.makedirs(osp.abspath(cfg.work_dir), exist_ok=True)
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file = osp.join(cfg.work_dir, f'{timestamp}.log')
@@ -172,18 +202,30 @@ def main():
     writer = SummaryWriter(cfg.work_dir)
 
     # model
+<<<<<<< HEAD
     model = SoftGroup(**cfg.model).cuda() # TAKES MODEL SPECIFICATION FROM YAML FILE AS INPUT, **dictionary IS STANDARD WAY TO PASS ARGUMENTS FROM DICT TO FUNCTION
     if args.dist:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
+=======
+    model = SoftGroup(**cfg.model).cuda()
+    if args.dist:
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
 
     # data
     train_set = build_dataset(cfg.data.train, logger)
+<<<<<<< HEAD
     torch.save(train_set, "test/train_set.pth") # SAVE DATASET TO INSPECT IT
     val_set = build_dataset(cfg.data.test, logger)
     train_loader = build_dataloader(
         train_set, training=True, dist=args.dist, **cfg.dataloader.train)
     torch.save(train_loader, "test/train_loader.pth") # SAVE DATALOADER TO INSPECT IT
+=======
+    val_set = build_dataset(cfg.data.test, logger)
+    train_loader = build_dataloader(
+        train_set, training=True, dist=args.dist, **cfg.dataloader.train)
+>>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
     val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
 
     # optim
