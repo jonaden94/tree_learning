@@ -4,7 +4,17 @@ import os
 import argparse
 import yaml
 import itertools
-from utils.config import read_yaml
+
+def read_yaml(path):
+    with open(path, 'r') as stream:
+        try:
+            parsed_yaml = yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
+    config = argparse.ArgumentParser()
+    for k, v in parsed_yaml.items():
+        config.add_argument('--' + k, default=v)
+    return config.parse_args("")
 
 VAL = 1000 # value that is necessary for voxelization. It is used to subset pointcloud. Since we do not want the pointcloud to be subset, it is larger than any coordinate value
 """
