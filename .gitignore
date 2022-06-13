@@ -76,3 +76,6 @@ dataset/s3dis/preprocess
 dataset/s3dis/val_gt
 dataset/s3dis/preprocess_sample
 dataset/s3dis/Stanford3dDataset_v1.2
+
+/data/raw_data/beech_plots/
+/data/exploration/exploration_data/

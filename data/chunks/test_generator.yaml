@@ -1,0 +1,22 @@
+plot_path: "data/forest/forest_labeled_cleanest2.npy"
+
+# Preprocessing
+voxelize: True
+voxel_size: 0.10
+remove_background: True
+occupancy_resolution: 1
+number_occupancy_points: 100000
+fill_holes_how_far: 3
+
+# Sample characteristics
+inner_edge: 15
+outer_edge: 7
+min_occupied: 0.80
+
+# Data saving
+sample_path: "data/trees/tmp"
+save_config: True
+normalize: True
+save_labels: True
+
+
