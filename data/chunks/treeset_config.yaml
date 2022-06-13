@@ -1,0 +1,15 @@
+# list of folders with plots to be included into dataset
+plot_folders: [data/trees/tmp]
+in_memory: True
+
+# choose what data to provide
+include_labels: True
+mode: "train"
+npoints: 2000
+
+# normalization parameters
+normalization: True
+normalization_pars: [10, 10, 7.5]
+
+# data augmentations
+transformations: []
