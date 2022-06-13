@@ -5,20 +5,12 @@ import pickle
 import torch
 from torch import distributed as dist
 
-<<<<<<< HEAD
 # CHECK IF THE CURRENT PROCESS HAS THE NUMBER 0, I.E. THE FIRST OR MAIN PROCESS
-=======
-
->>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 def is_main_process():
     rank, _ = get_dist_info()
     return rank == 0
 
-<<<<<<< HEAD
 # RETURNS UNIQUE IDENTIFIER OF THE CURRENT PROCESS WITHIN DISTRIBUTED PROCESS GROUP (rank) AND THE NUMBER OF SUCH PROCESSES - 1 (world_size)
-=======
-
->>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 def get_dist_info():
     if dist.is_available() and dist.is_initialized():
         rank = dist.get_rank()
@@ -35,11 +27,7 @@ def init_dist(backend='nccl', **kwargs):
     torch.cuda.set_device(rank % num_gpus)
     dist.init_process_group(backend=backend, **kwargs)
 
-<<<<<<< HEAD
 # WRAPPER RETURNS NOTHING IF NOT MAIN PROCESS
-=======
-
->>>>>>> d0ad4a93b778eb9170a433e205baabbc65f5d702
 def master_only(func):
 
     @functools.wraps(func)
