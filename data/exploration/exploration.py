@@ -1,5 +1,6 @@
 import numpy as np
 import pptk
+import os
 
 
 # Error class to catch if no points in radius
@@ -9,6 +10,8 @@ class EmptyFilter(Exception):
 
 
 def explore(path, treenumber=0, radius=1000, remove_non_trees=False, subset=50):
+
+    print(os.getcwd())
 
     # load all forest points
     points = np.load(path)
@@ -55,8 +58,8 @@ def explore(path, treenumber=0, radius=1000, remove_non_trees=False, subset=50):
     tree_position = np.hstack([tree_position, 0])
     v.set(lookat=tree_position)
 
-
-path = "C:/Users/jonat/Documents/Studium/Angewandte Statistik/4.Semester/MA/KI-Segmentation_new/beech_plots_automatic/G1W/all_points/all_points.npy"
+plot = "G2W"
+path = f"data/raw_data/beech_plots/{plot}/all_points/all_points.npy"
 # path = "C:/Users/jonat/Documents/Studium/Angewandte Statistik/4.Semester/MA/KI-Segmentation_new/beech_plots_automatic/mixed_forest_manually_labeled/all_points/all_points.npy"
 
 explore(path=path, treenumber=0, radius=1000, remove_non_trees=False)
