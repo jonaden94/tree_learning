@@ -179,11 +179,9 @@ def main():
 
     # data
     train_set = build_dataset(cfg.data.train, logger)
-    torch.save(train_set, "test/train_set.pth") # SAVE DATASET TO INSPECT IT
     val_set = build_dataset(cfg.data.test, logger)
     train_loader = build_dataloader(
         train_set, training=True, dist=args.dist, **cfg.dataloader.train)
-    torch.save(train_loader, "test/train_loader.pth") # SAVE DATALOADER TO INSPECT IT
     val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
 
     # optim

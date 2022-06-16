@@ -34,18 +34,22 @@ class CustomDataset(Dataset):
         self.filenames = self.get_filenames()
         self.logger.info(f'Load {self.mode} dataset: {len(self.filenames)} scans')
 
+    # GET LIST OF FILENAMES TO SAVE IN SELF.FILENAMES
     def get_filenames(self):
-        filenames = glob(osp.join(self.data_root, self.prefix, '*' + self.suffix))
+        filenames = glob(osp.join(self.data_root, self.prefix, '*' + self.suffix)) # RETURNS LIST OF PATHNAMES THAT MATCH INPUT (SO ALL FILES)
         assert len(filenames) > 0, 'Empty dataset.'
         filenames = sorted(filenames * self.repeat)
         return filenames
 
+    # LOAD SPECIFIC FILE (TO USE IN GETITEM)
     def load(self, filename):
         return torch.load(filename)
 
+    # LEN FUNC
     def __len__(self):
         return len(self.filenames)
 
+    # ELASTIC TRANSFORMATION OF EXAMPLE
     def elastic(self, x, gran, mag):
         blur0 = np.ones((3, 1, 1)).astype('float32') / 3
         blur1 = np.ones((1, 3, 1)).astype('float32') / 3
@@ -74,7 +78,7 @@ class CustomDataset(Dataset):
         pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0
         instance_pointnum = []
         instance_cls = []
-        instance_num = int(instance_label.max()) + 1
+        instance_num = int(instance_label.max()) + 1 # INSTANCE LABELS IN EXAMPLE ARE CODED AS -100, 1, 2, 3, 4, .. (-100 are points not belonging to any instance)
         for i_ in range(instance_num):
             inst_idx_i = np.where(instance_label == i_)
             xyz_i = xyz[inst_idx_i]
@@ -85,15 +89,16 @@ class CustomDataset(Dataset):
         pt_offset_label = pt_mean - xyz
         return instance_num, instance_pointnum, instance_cls, pt_offset_label
 
+    # CLASSICAL DATA AUGMENTATIONS HERE IMPLEMENTED AS A SINGLE MATRIX MULTIPLICATION
     def dataAugment(self, xyz, jitter=False, flip=False, rot=False, prob=1.0):
         m = np.eye(3)
         if jitter and np.random.rand() < prob:
-            m += np.random.randn(3, 3) * 0.1
+            m += np.random.randn(3, 3) * 0.1 # ADD NORMALLY DISTRIBUTED VALUES TO IDENTITY MATRIX IF RANDOM NUMBER IS SMALLER THAN PROB (ALWAYS IF PROB=1)
         if flip and np.random.rand() < prob:
-            m[0][0] *= np.random.randint(0, 2) * 2 - 1
+            m[0][0] *= np.random.randint(0, 2) * 2 - 1 # RANDOM FLIP OF X COORDINATE (SAME CONDITION AS ABOVE)
         if rot and np.random.rand() < prob:
             theta = np.random.rand() * 2 * math.pi
-            m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0],
+            m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0], # RANDOM ROTATION (SAME CONDITION AS ABOVE)
                               [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
         else:
             # Empirically, slightly rotate the scene can match the results from checkpoint
@@ -103,6 +108,7 @@ class CustomDataset(Dataset):
 
         return np.matmul(xyz, m)
 
+    # SOME RANDOM CROPPINT OF THE SCENE
     def crop(self, xyz, step=32):
         xyz_offset = xyz.copy()
         valid_idxs = xyz_offset.min(1) >= 0
@@ -119,6 +125,7 @@ class CustomDataset(Dataset):
             spatial_shape[:2] -= step_temp
         return xyz_offset, valid_idxs
 
+    # GET INSTANCE LABELS OF CROPPED SCENE
     def getCroppedInstLabel(self, instance_label, valid_idxs):
         instance_label = instance_label[valid_idxs]
         j = 0
@@ -128,15 +135,23 @@ class CustomDataset(Dataset):
             j += 1
         return instance_label
 
+    # TRAINING TRANSFORMATIONS
     def transform_train(self, xyz, rgb, semantic_label, instance_label, aug_prob=1.0):
+        # APPLY NORMAL DATA AUGMENTATIONS
         xyz_middle = self.dataAugment(xyz, True, True, True, aug_prob)
+        # SCALE ORIGINAL VALUES WITH 50
         xyz = xyz_middle * self.voxel_cfg.scale
+        # APPLY ELASTIC TRANSFORMATION
         if np.random.rand() < aug_prob:
             xyz = self.elastic(xyz, 6 * self.voxel_cfg.scale // 50, 40 * self.voxel_cfg.scale / 50)
             xyz = self.elastic(xyz, 20 * self.voxel_cfg.scale // 50,
                                160 * self.voxel_cfg.scale / 50)
         # xyz_middle = xyz / self.voxel_cfg.scale
+
+        # MAKE SCALED POINTS HAVE ALL POSITIVE VALUES
         xyz = xyz - xyz.min(0)
+
+        # CROP SCENE
         max_tries = 5
         while (max_tries > 0):
             xyz_offset, valid_idxs = self.crop(xyz)
@@ -153,6 +168,7 @@ class CustomDataset(Dataset):
         instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
         return xyz, xyz_middle, rgb, semantic_label, instance_label
 
+    # ALSO TRANSFORMATIONS BUT LESS THAN DURING TRAINING
     def transform_test(self, xyz, rgb, semantic_label, instance_label):
         xyz_middle = self.dataAugment(xyz, False, False, False)
         xyz = xyz_middle * self.voxel_cfg.scale
@@ -168,7 +184,7 @@ class CustomDataset(Dataset):
         data = self.transform_train(*data) if self.training else self.transform_test(*data)
         if data is None:
             return None
-        xyz, xyz_middle, rgb, semantic_label, instance_label = data
+        xyz, xyz_middle, rgb, semantic_label, instance_label = data# XYZ MIDDLE ARE THE POINTS ON WHICH STANDARD DATA TRANSFORMATIONS WERE APPLIED (but only select cropped indices); ON XYZ ALSO ELASTIC AND CROPPING ARE APPLIED AND SHIFTING SUCH THAT ALL VALUES ARE POSITIVE
         info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label)
         inst_num, inst_pointnum, inst_cls, pt_offset_label = info
         coord = torch.from_numpy(xyz).long()

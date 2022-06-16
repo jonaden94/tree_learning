@@ -54,7 +54,7 @@ data:
 
 dataloader:
   train:
-    batch_size: 4
+    batch_size: 2
     num_workers: 4
   test:
     batch_size: 1
@@ -62,7 +62,7 @@ dataloader:
 
 optimizer:
   type: 'Adam'
-  lr: 0.004
+  lr: 0.002 # decrease learning rate by 1/2 since batch size was halved because of memory constraints on 1 gpu
 
 save_cfg:
   semantic: True
