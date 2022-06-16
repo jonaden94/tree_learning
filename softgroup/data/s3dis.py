@@ -13,6 +13,7 @@ class S3DISDataset(CustomDataset):
     CLASSES = ('ceiling', 'floor', 'wall', 'beam', 'column', 'window', 'door', 'chair', 'table',
                'bookcase', 'sofa', 'board', 'clutter')
 
+    # OVERWRITES METHOD FROOM PARENT CLASS
     def get_filenames(self):
         if isinstance(self.prefix, str):
             self.prefix = [self.prefix]
@@ -24,6 +25,7 @@ class S3DISDataset(CustomDataset):
         filenames_all = sorted(filenames_all * self.repeat)
         return filenames_all
 
+    # OVERWRITES LOAD FUNCTION FROM PARENT CLASS
     def load(self, filename):
         # TODO make file load results consistent
         xyz, rgb, semantic_label, instance_label, _, _ = torch.load(filename)
@@ -37,9 +39,12 @@ class S3DISDataset(CustomDataset):
             instance_label = self.getCroppedInstLabel(instance_label, inds)
         return xyz, rgb, semantic_label, instance_label
 
+    # TAKES CROP METHOD FROM PARENT CLASS
     def crop(self, xyz, step=64):
         return super().crop(xyz, step=step)
 
+
+    # OVERWRITES TRANSFORM TEST OF PARENT CLASS
     def transform_test(self, xyz, rgb, semantic_label, instance_label):
         # devide into 4 piecies
         inds = np.arange(xyz.shape[0])
@@ -72,6 +77,7 @@ class S3DISDataset(CustomDataset):
         instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)  # TODO remove this
         return xyz, xyz_middle, rgb, semantic_label, instance_label
 
+    # OVERWRITES COLLATE FUNCTION FROM PARENT CLASS; BUT ONLY DURING TESTING
     def collate_fn(self, batch):
         if self.training:
             return super().collate_fn(batch)

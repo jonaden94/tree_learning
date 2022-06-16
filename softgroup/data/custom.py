@@ -74,15 +74,16 @@ class CustomDataset(Dataset):
 
         return x + g(x) * mag
 
+    # GET INSTANCE RELATED INFO FOR ALL INSTANCES IN AN EXAMPLE (THIS INCLUDES OFFSET VECTOR, INSTANCE CLASS, INSTANCE NUM_POINTS)
     def getInstanceInfo(self, xyz, instance_label, semantic_label):
-        pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0
+        pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0 # -99 MEANS THE POINT HAS NO OFFSET VECTOR (SINCE IT DOES NOT BELONG TO ANY ISNTANCE)
         instance_pointnum = []
         instance_cls = []
-        instance_num = int(instance_label.max()) + 1 # INSTANCE LABELS IN EXAMPLE ARE CODED AS -100, 1, 2, 3, 4, .. (-100 are points not belonging to any instance)
-        for i_ in range(instance_num):
+        instance_num = int(instance_label.max()) + 1 # INSTANCE LABELS IN EXAMPLE ARE CODED AS -100, 0, 1, 2, 3, 4, .., max (-100 are points not belonging to any instance)
+        for i_ in range(instance_num): # ONLY COUNTS INSTANCES (NOT BACKGROUND)
             inst_idx_i = np.where(instance_label == i_)
             xyz_i = xyz[inst_idx_i]
-            pt_mean[inst_idx_i] = xyz_i.mean(0)
+            pt_mean[inst_idx_i] = xyz_i.mean(0) # CALCULATE OFFSET VECTOR
             instance_pointnum.append(inst_idx_i[0].size)
             cls_idx = inst_idx_i[0][0]
             instance_cls.append(semantic_label[cls_idx])
@@ -185,18 +186,32 @@ class CustomDataset(Dataset):
         if data is None:
             return None
         xyz, xyz_middle, rgb, semantic_label, instance_label = data# XYZ MIDDLE ARE THE POINTS ON WHICH STANDARD DATA TRANSFORMATIONS WERE APPLIED (but only select cropped indices); ON XYZ ALSO ELASTIC AND CROPPING ARE APPLIED AND SHIFTING SUCH THAT ALL VALUES ARE POSITIVE
-        info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label)
+        info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label) # GET ALL INSTANCE RELATED INFO (SEE ABOVE)
         inst_num, inst_pointnum, inst_cls, pt_offset_label = info
         coord = torch.from_numpy(xyz).long()
         coord_float = torch.from_numpy(xyz_middle)
+
+        # SAVE RGB AS FEAT AND AUGMENT IT
         feat = torch.from_numpy(rgb).float()
         if self.training:
             feat += torch.randn(3) * 0.1
+
         semantic_label = torch.from_numpy(semantic_label)
         instance_label = torch.from_numpy(instance_label)
         pt_offset_label = torch.from_numpy(pt_offset_label)
         return (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
                 inst_pointnum, inst_cls, pt_offset_label)
+
+        # scan_id: e.g. Area1_office_21
+        # coord: coordinates of fully augmented data (scaled and forced to non float values and elastically transformed compared to coord_float)
+        # coord_float: basically contains the original values only with jitter random rotate and random flip
+        # feat: rgb values between 0 and 1 plus random jitter
+        # semantic_label: semantic label of augmented example (13 possibilities here i think)
+        # instance_label: instance labels in the form -100, 1, 2, 3... of the example
+        # instance_num: number of instances in example (background excluded)
+        # inst_pointnum: list of point numbers for each instance in example (background is not included in this list)
+        # ins_cls: list of semantic class for each instance (background excluded)
+        # pt_offset_label: offset label for each point (three dimensional)
 
     def collate_fn(self, batch):
         scan_ids = []
@@ -212,15 +227,15 @@ class CustomDataset(Dataset):
 
         total_inst_num = 0
         batch_id = 0
-        for data in batch:
+        for data in batch: # BATCH IS ITERABLE THAT CONTAINS OBJECTS RETURNED BY GETITEM FUNCTION
             if data is None:
                 continue
             (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
-             inst_pointnum, inst_cls, pt_offset_label) = data
-            instance_label[np.where(instance_label != -100)] += total_inst_num
-            total_inst_num += inst_num
+             inst_pointnum, inst_cls, pt_offset_label) = data # GET RESULT FROM GETITEM AND SAVE AS TUPLE
+            instance_label[np.where(instance_label != -100)] += total_inst_num # THIS RESULTS IN A CONSECUTIVE LABELING OF INSTANCES IN A BATCH. E.G. WHEN THERE ARE 30 INSTANCES IN THE WHOLE BATCH THEY WILL BE LABELED 1, 2, 3, 4, .., 30
+            total_inst_num += inst_num # COUNT TOTAL INSTANCE NUMBER IN WHOLE BATCH
             scan_ids.append(scan_id)
-            coords.append(torch.cat([coord.new_full((coord.size(0), 1), batch_id), coord], 1))
+            coords.append(torch.cat([coord.new_full((coord.size(0), 1), batch_id), coord], 1)) # CONCATENATE COLUMN TO COORDS THAT INDICATES WHICH SAMPLE FROM BATCH A POINT BELONGS TO
             coords_float.append(coord_float)
             feats.append(feat)
             semantic_labels.append(semantic_label)
@@ -233,7 +248,7 @@ class CustomDataset(Dataset):
         if batch_id < len(batch):
             self.logger.info(f'batch is truncated from size {len(batch)} to {batch_id}')
 
-        # merge all the scenes in the batch
+        # MERGE ALL THE SCENES IN A BATCH
         coords = torch.cat(coords, 0)  # long (N, 1 + 3), the batch item idx is put in coords[:, 0]
         batch_idxs = coords[:, 0].int()
         coords_float = torch.cat(coords_float, 0).to(torch.float32)  # float (N, 3)
@@ -264,3 +279,23 @@ class CustomDataset(Dataset):
             'spatial_shape': spatial_shape,
             'batch_size': batch_id,
         }
+
+        # scan_ids: LIST OF SCAN_IDS OF LENGTH BATCH_SIZE
+        # coords: TORCH TENSOR LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. FIRST COLUMN INDICATES TO WHICH EXAMPLE IN THE BATCH A POINT BELONGS TO
+        # batch_idxs: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. SAME AS FIRST COLUMN OF COORDS
+        # voxel_coords: VOXELIZED COORDINATES (TYPICALLY OF SMALLER LENGTH THAN COORDS OR COORDS_FLOAT)
+
+        # p2v_map: UNFORTUNATELY I DONT KNOW WHAT EXACTLY THIS IS BUT I GUESS IT SOMEHOW CONNECTS THE VOXELS TO THE ORIGINAL POINTS
+        # v2p_map: UNFORTUNATELY I DONT KNOW WHAT EXACTLY THIS IS BUT I GUESS IT SOMEHOW CONNECTS THE VOXELS TO THE ORIGINAL POINTS
+
+        # coords_float: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. NO ELASTIC TRANSFORMATIONS AND NO SCALING COMPARED TO COORDS
+        # feats: TORCH TENSOR OF RGB VALUES OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH.
+        # semantic_labels: TORCH TENSOR OF SEMANTIC LABELS OF LENGHT OF TOTAL NUMBER OF POINTS IN BATCH
+        # instance_labels: TORCH TENSOR OF INSTANCE LABELS (LABELED CONSECUTIVELY OVER WHOLE BATCH) OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH
+        # instance_pointnum: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF INSTANCES THAT CONTAINS NUMBER OF POINTS FOR EACH INSTANCE
+        # instance_cls: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF INSTANCES THAT CONTAINS SEMANTIC CLASS FOR EACH INSTANCE
+        # pt_offset_labels: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH WITH OFFSET VECTORS FOR EACH POINT
+        # spatial_shape: 1D-ARRAY OF LENGTH 3 THAT GIVES EXTENT ALONG X Y AND Z DIMENSIONS OF ALL POINTS IN BATCH: THE RESPECTIVE VALUES ARE CLIPPED TO BE IN RANGE OF [128, 512] BY DEFAULT
+        # batch_size: BATCH SIZE
+
+
