@@ -1,34 +1,34 @@
 import math
 import os.path as osp
-from glob import glob
+import os
 
 import numpy as np
 import scipy.interpolate
 import scipy.ndimage
 import torch
+
 from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
 from ..ops import voxelization_idx
 
 
-class CustomDataset(Dataset):
+# perhaps the chunks are still too large and i need to downsample them by 1/4
 
-    CLASSES = None
+
+class TreeDataset(Dataset):
+
+    CLASSES = ('tree', 'clutter')
 
     def __init__(self,
                  data_root,
-                 prefix,
-                 suffix,
                  voxel_cfg=None,
                  training=True,
-                 repeat=1,
                  logger=None):
         self.data_root = data_root
-        self.prefix = prefix
-        self.suffix = suffix
         self.voxel_cfg = voxel_cfg
         self.training = training
-        self.repeat = repeat
         self.logger = logger
         self.mode = 'train' if training else 'test'
         self.filenames = self.get_filenames()
@@ -36,14 +36,12 @@ class CustomDataset(Dataset):
 
     # GET LIST OF FILENAMES TO SAVE IN SELF.FILENAMES
     def get_filenames(self):
-        filenames = glob(osp.join(self.data_root, self.prefix, '*' + self.suffix)) # RETURNS LIST OF PATHNAMES THAT MATCH INPUT (SO ALL FILES)
-        assert len(filenames) > 0, 'Empty dataset.'
-        filenames = sorted(filenames * self.repeat)
+        filenames = os.listdir(self.data_root)
         return filenames
 
     # LOAD SPECIFIC FILE (TO USE IN GETITEM)
     def load(self, filename):
-        return torch.load(filename)
+        return torch.load(osp.join(self.data_root, filename))
 
     # LEN FUNC
     def __len__(self):
@@ -76,14 +74,14 @@ class CustomDataset(Dataset):
 
     # GET INSTANCE RELATED INFO FOR ALL INSTANCES IN AN EXAMPLE (THIS INCLUDES OFFSET VECTOR, INSTANCE CLASS, INSTANCE NUM_POINTS)
     def getInstanceInfo(self, xyz, instance_label, semantic_label):
-        pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0 # -99 MEANS THE POINT HAS NO OFFSET VECTOR (SINCE IT DOES NOT BELONG TO ANY ISNTANCE)
+        pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0 # -100 IS CHOSEN AS THE MEAN OF THE OBJECT IF IT IS NO INSTANCE (BACKGROUND) THIS RESULTS IN NEGATIVE OFFSET VECTOR
         instance_pointnum = []
         instance_cls = []
-        instance_num = int(instance_label.max()) + 1 # INSTANCE LABELS IN EXAMPLE ARE CODED AS -100, 0, 1, 2, 3, 4, .., max (-100 are points not belonging to any instance)
-        for i_ in range(instance_num): # ONLY COUNTS INSTANCES (NOT BACKGROUND)
+        instance_num = int(instance_label.max()) # INSTANCE LABELS IN EXAMPLE ARE CODED AS -100, 1, 2, 3, 4, .., max (-100 are points not belonging to any instance)
+        for i_ in range(1, instance_num + 1): # ONLY COUNTS INSTANCES (NOT BACKGROUND)
             inst_idx_i = np.where(instance_label == i_)
             xyz_i = xyz[inst_idx_i]
-            pt_mean[inst_idx_i] = xyz_i.mean(0) # CALCULATE OFFSET VECTOR
+            pt_mean[inst_idx_i] = xyz_i.mean(0) # CALCULATE INSTANCE MEAN
             instance_pointnum.append(inst_idx_i[0].size)
             cls_idx = inst_idx_i[0][0]
             instance_cls.append(semantic_label[cls_idx])
@@ -101,43 +99,12 @@ class CustomDataset(Dataset):
             theta = np.random.rand() * 2 * math.pi
             m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0], # RANDOM ROTATION (SAME CONDITION AS ABOVE)
                               [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
-        else:
-            # Empirically, slightly rotate the scene can match the results from checkpoint
-            theta = 0.35 * math.pi
-            m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0],
-                              [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
 
         return np.matmul(xyz, m)
 
-    # SOME RANDOM CROPPINT OF THE SCENE
-    def crop(self, xyz, step=32):
-        xyz_offset = xyz.copy()
-        valid_idxs = xyz_offset.min(1) >= 0
-        assert valid_idxs.sum() == xyz.shape[0]
-        spatial_shape = np.array([self.voxel_cfg.spatial_shape[1]] * 3)
-        room_range = xyz.max(0) - xyz.min(0)
-        while (valid_idxs.sum() > self.voxel_cfg.max_npoint):
-            step_temp = step
-            if valid_idxs.sum() > 1e6:
-                step_temp = step * 2
-            offset = np.clip(spatial_shape - room_range + 0.001, None, 0) * np.random.rand(3)
-            xyz_offset = xyz + offset
-            valid_idxs = (xyz_offset.min(1) >= 0) * ((xyz_offset < spatial_shape).sum(1) == 3)
-            spatial_shape[:2] -= step_temp
-        return xyz_offset, valid_idxs
-
-    # GET INSTANCE LABELS OF CROPPED SCENE
-    def getCroppedInstLabel(self, instance_label, valid_idxs):
-        instance_label = instance_label[valid_idxs]
-        j = 0
-        while (j < instance_label.max()):
-            if (len(np.where(instance_label == j)[0]) == 0):
-                instance_label[instance_label == instance_label.max()] = j
-            j += 1
-        return instance_label
 
     # TRAINING TRANSFORMATIONS
-    def transform_train(self, xyz, rgb, semantic_label, instance_label, aug_prob=1.0):
+    def transform_train(self, xyz, semantic_label, instance_label, aug_prob=1.0):
         # APPLY NORMAL DATA AUGMENTATIONS
         xyz_middle = self.dataAugment(xyz, True, True, True, aug_prob)
         # SCALE ORIGINAL VALUES WITH 50
@@ -152,60 +119,35 @@ class CustomDataset(Dataset):
         # MAKE SCALED POINTS HAVE ALL POSITIVE VALUES
         xyz = xyz - xyz.min(0)
 
-        # CROP SCENE
-        max_tries = 5
-        while (max_tries > 0):
-            xyz_offset, valid_idxs = self.crop(xyz)
-            if valid_idxs.sum() >= self.voxel_cfg.min_npoint:
-                xyz = xyz_offset
-                break
-            max_tries -= 1
-        if valid_idxs.sum() < self.voxel_cfg.min_npoint:
-            return None
-        xyz = xyz[valid_idxs]
-        xyz_middle = xyz_middle[valid_idxs]
-        rgb = rgb[valid_idxs]
-        semantic_label = semantic_label[valid_idxs]
-        instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
-        return xyz, xyz_middle, rgb, semantic_label, instance_label
+        return xyz, xyz_middle, semantic_label, instance_label
 
     # ALSO TRANSFORMATIONS BUT LESS THAN DURING TRAINING
-    def transform_test(self, xyz, rgb, semantic_label, instance_label):
+    def transform_test(self, xyz, semantic_label, instance_label):
         xyz_middle = self.dataAugment(xyz, False, False, False)
         xyz = xyz_middle * self.voxel_cfg.scale
-        xyz -= xyz.min(0)
-        valid_idxs = np.ones(xyz.shape[0], dtype=bool)
-        instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
-        return xyz, xyz_middle, rgb, semantic_label, instance_label
+        xyz = xyz - xyz.min(0)
+        return xyz, xyz_middle, semantic_label, instance_label
 
     def __getitem__(self, index):
         filename = self.filenames[index]
-        scan_id = osp.basename(filename).replace(self.suffix, '')
         data = self.load(filename)
         data = self.transform_train(*data) if self.training else self.transform_test(*data)
         if data is None:
             return None
-        xyz, xyz_middle, rgb, semantic_label, instance_label = data# XYZ MIDDLE ARE THE POINTS ON WHICH STANDARD DATA TRANSFORMATIONS WERE APPLIED (but only select cropped indices); ON XYZ ALSO ELASTIC AND CROPPING ARE APPLIED AND SHIFTING SUCH THAT ALL VALUES ARE POSITIVE
+        xyz, xyz_middle, semantic_label, instance_label = data # XYZ MIDDLE ARE THE POINTS ON WHICH STANDARD DATA TRANSFORMATIONS WERE APPLIED (but only select cropped indices); ON XYZ ALSO ELASTIC, CROPPING, SCALING AND SHIFTING ARE APPLIED SUCH THAT ALL VALUES ARE POSITIVE
         info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label) # GET ALL INSTANCE RELATED INFO (SEE ABOVE)
         inst_num, inst_pointnum, inst_cls, pt_offset_label = info
         coord = torch.from_numpy(xyz).long()
         coord_float = torch.from_numpy(xyz_middle)
 
-        # SAVE RGB AS FEAT AND AUGMENT IT
-        feat = torch.from_numpy(rgb).float()
-        if self.training:
-            feat += torch.randn(3) * 0.1
-
         semantic_label = torch.from_numpy(semantic_label)
         instance_label = torch.from_numpy(instance_label)
         pt_offset_label = torch.from_numpy(pt_offset_label)
-        return (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
+        return (coord, coord_float, semantic_label, instance_label, inst_num,
                 inst_pointnum, inst_cls, pt_offset_label)
 
-        # scan_id: e.g. Area1_office_21
         # coord: coordinates of fully augmented data (scaled and forced to non float values and elastically transformed compared to coord_float)
         # coord_float: basically contains the original values only with jitter random rotate and random flip
-        # feat: rgb values between 0 and 1 plus random jitter
         # semantic_label: semantic label of augmented example (13 possibilities here i think)
         # instance_label: instance labels in the form -100, 1, 2, 3... of the example
         # instance_num: number of instances in example (background excluded)
@@ -214,10 +156,8 @@ class CustomDataset(Dataset):
         # pt_offset_label: offset label for each point (three dimensional)
 
     def collate_fn(self, batch):
-        scan_ids = []
         coords = []
         coords_float = []
-        feats = []
         semantic_labels = []
         instance_labels = []
 
@@ -228,16 +168,16 @@ class CustomDataset(Dataset):
         total_inst_num = 0
         batch_id = 0
         for data in batch: # BATCH IS ITERABLE THAT CONTAINS OBJECTS RETURNED BY GETITEM FUNCTION
+
             if data is None:
                 continue
-            (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
+
+            (coord, coord_float, semantic_label, instance_label, inst_num,
              inst_pointnum, inst_cls, pt_offset_label) = data # GET RESULT FROM GETITEM AND SAVE AS TUPLE
             instance_label[np.where(instance_label != -100)] += total_inst_num # THIS RESULTS IN A CONSECUTIVE LABELING OF INSTANCES IN A BATCH. E.G. WHEN THERE ARE 30 INSTANCES IN THE WHOLE BATCH THEY WILL BE LABELED 1, 2, 3, 4, .., 30
             total_inst_num += inst_num # COUNT TOTAL INSTANCE NUMBER IN WHOLE BATCH
-            scan_ids.append(scan_id)
             coords.append(torch.cat([coord.new_full((coord.size(0), 1), batch_id), coord], 1)) # CONCATENATE COLUMN TO COORDS THAT INDICATES WHICH SAMPLE FROM BATCH A POINT BELONGS TO
             coords_float.append(coord_float)
-            feats.append(feat)
             semantic_labels.append(semantic_label)
             instance_labels.append(instance_label)
             instance_pointnum.extend(inst_pointnum)
@@ -252,7 +192,6 @@ class CustomDataset(Dataset):
         coords = torch.cat(coords, 0)  # long (N, 1 + 3), the batch item idx is put in coords[:, 0]
         batch_idxs = coords[:, 0].int()
         coords_float = torch.cat(coords_float, 0).to(torch.float32)  # float (N, 3)
-        feats = torch.cat(feats, 0)  # float (N, C)
         semantic_labels = torch.cat(semantic_labels, 0).long()  # long (N)
         instance_labels = torch.cat(instance_labels, 0).long()  # long (N)
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
@@ -263,14 +202,12 @@ class CustomDataset(Dataset):
             coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
         voxel_coords, v2p_map, p2v_map = voxelization_idx(coords, batch_id)
         return {
-            'scan_ids': scan_ids,
             'coords': coords,
             'batch_idxs': batch_idxs,
             'voxel_coords': voxel_coords,
             'p2v_map': p2v_map,
             'v2p_map': v2p_map,
             'coords_float': coords_float,
-            'feats': feats,
             'semantic_labels': semantic_labels,
             'instance_labels': instance_labels,
             'instance_pointnum': instance_pointnum,
@@ -280,7 +217,6 @@ class CustomDataset(Dataset):
             'batch_size': batch_id,
         }
 
-        # scan_ids: LIST OF SCAN_IDS OF LENGTH BATCH_SIZE
         # coords: TORCH TENSOR LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. FIRST COLUMN INDICATES TO WHICH EXAMPLE IN THE BATCH A POINT BELONGS TO
         # batch_idxs: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. SAME AS FIRST COLUMN OF COORDS
         # voxel_coords: VOXELIZED COORDINATES (TYPICALLY OF SMALLER LENGTH THAN COORDS OR COORDS_FLOAT)
@@ -289,13 +225,38 @@ class CustomDataset(Dataset):
         # v2p_map: UNFORTUNATELY I DONT KNOW WHAT EXACTLY THIS IS BUT I GUESS IT SOMEHOW CONNECTS THE VOXELS TO THE ORIGINAL POINTS
 
         # coords_float: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. NO ELASTIC TRANSFORMATIONS AND NO SCALING COMPARED TO COORDS
-        # feats: TORCH TENSOR OF RGB VALUES OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH.
         # semantic_labels: TORCH TENSOR OF SEMANTIC LABELS OF LENGHT OF TOTAL NUMBER OF POINTS IN BATCH
         # instance_labels: TORCH TENSOR OF INSTANCE LABELS (LABELED CONSECUTIVELY OVER WHOLE BATCH) OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH
         # instance_pointnum: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF INSTANCES THAT CONTAINS NUMBER OF POINTS FOR EACH INSTANCE
         # instance_cls: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF INSTANCES THAT CONTAINS SEMANTIC CLASS FOR EACH INSTANCE
         # pt_offset_labels: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH WITH OFFSET VECTORS FOR EACH POINT
-        # spatial_shape: 1D-ARRAY OF LENGTH 3 THAT GIVES EXTENT ALONG X Y AND Z DIMENSIONS OF ALL POINTS IN BATCH: THE RESPECTIVE VALUES ARE CLIPPED TO BE IN RANGE OF [128, 512] BY DEFAULT
+        # spatial_shape: 1D-ARRAY OF LENGTH 3 THAT GIVES EXTENT ALONG X Y AND Z DIMENSIONS OF ALL POINTS IN BATCH: THE RESPECTIVE VALUES ARE CLIPPED TO BE IN RANGE OF [128, infinity] BY DEFAULT
         # batch_size: BATCH SIZE
 
 
+def build_dataloader(dataset, batch_size=1, num_workers=1, training=True, dist=False):
+    shuffle = training
+    sampler = DistributedSampler(dataset, shuffle=shuffle) if dist else None
+    if sampler is not None:
+        shuffle = False
+    if training:
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            collate_fn=dataset.collate_fn,
+            shuffle=shuffle,
+            sampler=sampler,
+            drop_last=True,
+            pin_memory=True)
+    else:
+        assert batch_size == 1
+        return DataLoader(
+            dataset,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            collate_fn=dataset.collate_fn,
+            shuffle=False,
+            sampler=sampler,
+            drop_last=False,
+            pin_memory=True)

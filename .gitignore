@@ -78,5 +78,6 @@ dataset/s3dis/preprocess_sample
 dataset/s3dis/Stanford3dDataset_v1.2
 
 /data/raw_data/
+/data/torch_chunks/
 /work_dirs/
 hais_ckpt_spconv2.pth

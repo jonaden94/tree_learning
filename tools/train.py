@@ -11,7 +11,8 @@ import munch
 import tqdm
 
 
-from softgroup.data import build_dataloader, build_dataset
+from softgroup.data import (TreeDataset, build_dataloader)
+
 from softgroup.model import SoftGroup
 
 from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
@@ -178,8 +179,11 @@ def main():
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
 
     # data
-    train_set = build_dataset(cfg.data.train, logger)
-    val_set = build_dataset(cfg.data.test, logger)
+    train_set = TreeDataset(**cfg.data.train, logger=logger)
+
+    train_set.__getitem__(0)
+
+    val_set = TreeDataset(**cfg.data.test, logger=logger)
     train_loader = build_dataloader(
         train_set, training=True, dist=args.dist, **cfg.dataloader.train)
     val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
