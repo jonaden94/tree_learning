@@ -110,10 +110,10 @@ class TreeDataset(Dataset):
         # SCALE ORIGINAL VALUES WITH 50
         xyz = xyz_middle * self.voxel_cfg.scale
         # APPLY ELASTIC TRANSFORMATION
-        if np.random.rand() < aug_prob:
-            xyz = self.elastic(xyz, 6 * self.voxel_cfg.scale // 50, 40 * self.voxel_cfg.scale / 50)
-            xyz = self.elastic(xyz, 20 * self.voxel_cfg.scale // 50,
-                               160 * self.voxel_cfg.scale / 50)
+        # if np.random.rand() < aug_prob:
+        #     xyz = self.elastic(xyz, 6 * self.voxel_cfg.scale // 50, 40 * self.voxel_cfg.scale / 50)
+        #     xyz = self.elastic(xyz, 20 * self.voxel_cfg.scale // 50,
+        #                        160 * self.voxel_cfg.scale / 50)
         # xyz_middle = xyz / self.voxel_cfg.scale
 
         # MAKE SCALED POINTS HAVE ALL POSITIVE VALUES
@@ -197,12 +197,14 @@ class TreeDataset(Dataset):
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
         instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
         pt_offset_labels = torch.cat(pt_offset_labels).float()
+        feats = torch.zeros(len(coords), 3)
 
         spatial_shape = np.clip(
             coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
         voxel_coords, v2p_map, p2v_map = voxelization_idx(coords, batch_id)
         return {
             'coords': coords,
+            'feats': feats,
             'batch_idxs': batch_idxs,
             'voxel_coords': voxel_coords,
             'p2v_map': p2v_map,

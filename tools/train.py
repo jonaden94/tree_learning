@@ -181,7 +181,7 @@ def main():
     # data
     train_set = TreeDataset(**cfg.data.train, logger=logger)
 
-    train_set.__getitem__(0)
+    # train_set.__getitem__(0)
 
     val_set = TreeDataset(**cfg.data.test, logger=logger)
     train_loader = build_dataloader(
