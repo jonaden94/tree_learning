@@ -3,19 +3,20 @@ import multiprocessing as mp
 import os
 import os.path as osp
 from functools import partial
-
 import numpy as np
 import torch
 import yaml
 from munch import Munch
-from softgroup.data import build_dataloader, build_dataset
+from tqdm import tqdm
+
+
+from softgroup.data import (TreeDataset, build_dataloader)
 from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
                                   evaluate_semantic_miou)
 from softgroup.model import SoftGroup
 from softgroup.util import (collect_results_gpu, get_dist_info, get_root_logger, init_dist,
                             is_main_process, load_checkpoint, rle_decode)
 from torch.nn.parallel import DistributedDataParallel
-from tqdm import tqdm
 
 
 def get_args():
@@ -87,7 +88,7 @@ def main():
     logger.info(f'Load state dict from {args.checkpoint}')
     load_checkpoint(args.checkpoint, logger, model)
 
-    dataset = build_dataset(cfg.data.test, logger)
+    dataset = TreeDataset(**cfg.data.test, logger=logger)
     dataloader = build_dataloader(dataset, training=False, dist=args.dist, **cfg.dataloader.test)
     results = []
     scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_labels = [], [], [], [], [], []

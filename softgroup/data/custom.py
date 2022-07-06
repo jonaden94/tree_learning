@@ -19,7 +19,7 @@ from ..ops import voxelization_idx
 
 class TreeDataset(Dataset):
 
-    CLASSES = ('tree', 'clutter')
+    CLASSES = ('ground', 'tree')
 
     def __init__(self,
                  data_root,
@@ -77,8 +77,8 @@ class TreeDataset(Dataset):
         pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0 # -100 IS CHOSEN AS THE MEAN OF THE OBJECT IF IT IS NO INSTANCE (BACKGROUND) THIS RESULTS IN NEGATIVE OFFSET VECTOR
         instance_pointnum = []
         instance_cls = []
-        instance_num = int(instance_label.max()) # INSTANCE LABELS IN EXAMPLE ARE CODED AS -100, 1, 2, 3, 4, .., max (-100 are points not belonging to any instance)
-        for i_ in range(1, instance_num + 1): # ONLY COUNTS INSTANCES (NOT BACKGROUND)
+        instance_num = int(instance_label.max()) + 1 # INSTANCE LABELS IN EXAMPLE ARE CODED AS -100, 1, 2, 3, 4, .., max (-100 are points not belonging to any instance)
+        for i_ in range(instance_num): # ONLY COUNTS INSTANCES (NOT BACKGROUND)
             inst_idx_i = np.where(instance_label == i_)
             xyz_i = xyz[inst_idx_i]
             pt_mean[inst_idx_i] = xyz_i.mean(0) # CALCULATE INSTANCE MEAN
@@ -143,7 +143,9 @@ class TreeDataset(Dataset):
         semantic_label = torch.from_numpy(semantic_label)
         instance_label = torch.from_numpy(instance_label)
         pt_offset_label = torch.from_numpy(pt_offset_label)
-        return (coord, coord_float, semantic_label, instance_label, inst_num,
+        scan_id = [filename.replace(".pth", "")]
+
+        return (scan_id, coord, coord_float, semantic_label, instance_label, inst_num,
                 inst_pointnum, inst_cls, pt_offset_label)
 
         # coord: coordinates of fully augmented data (scaled and forced to non float values and elastically transformed compared to coord_float)
@@ -156,6 +158,7 @@ class TreeDataset(Dataset):
         # pt_offset_label: offset label for each point (three dimensional)
 
     def collate_fn(self, batch):
+        scan_ids = []
         coords = []
         coords_float = []
         semantic_labels = []
@@ -172,7 +175,7 @@ class TreeDataset(Dataset):
             if data is None:
                 continue
 
-            (coord, coord_float, semantic_label, instance_label, inst_num,
+            (scan_id, coord, coord_float, semantic_label, instance_label, inst_num,
              inst_pointnum, inst_cls, pt_offset_label) = data # GET RESULT FROM GETITEM AND SAVE AS TUPLE
             instance_label[np.where(instance_label != -100)] += total_inst_num # THIS RESULTS IN A CONSECUTIVE LABELING OF INSTANCES IN A BATCH. E.G. WHEN THERE ARE 30 INSTANCES IN THE WHOLE BATCH THEY WILL BE LABELED 1, 2, 3, 4, .., 30
             total_inst_num += inst_num # COUNT TOTAL INSTANCE NUMBER IN WHOLE BATCH
@@ -183,6 +186,7 @@ class TreeDataset(Dataset):
             instance_pointnum.extend(inst_pointnum)
             instance_cls.extend(inst_cls)
             pt_offset_labels.append(pt_offset_label)
+            scan_ids.extend(scan_id)
             batch_id += 1
         assert batch_id > 0, 'empty batch'
         if batch_id < len(batch):
@@ -197,12 +201,16 @@ class TreeDataset(Dataset):
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
         instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
         pt_offset_labels = torch.cat(pt_offset_labels).float()
+
+        # this is just for code compatibility, does not contain any information
         feats = torch.zeros(len(coords), 3)
+
 
         spatial_shape = np.clip(
             coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
         voxel_coords, v2p_map, p2v_map = voxelization_idx(coords, batch_id)
         return {
+            'scan_ids': scan_ids,
             'coords': coords,
             'feats': feats,
             'batch_idxs': batch_idxs,

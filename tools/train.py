@@ -181,12 +181,12 @@ def main():
     # data
     train_set = TreeDataset(**cfg.data.train, logger=logger)
 
-    # train_set.__getitem__(0)
-
     val_set = TreeDataset(**cfg.data.test, logger=logger)
     train_loader = build_dataloader(
         train_set, training=True, dist=args.dist, **cfg.dataloader.train)
     val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
+
+    test = next(iter(train_loader))
 
     # optim
     optimizer = build_optimizer(model, cfg.optimizer)
