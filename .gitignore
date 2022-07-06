@@ -66,8 +66,7 @@ dist/
 *.zip
 
 # large files
-/data/raw_data/
-/data/torch_chunks/
+/data/trees/
 /data/s3dis/
 /work_dirs/
 hais_ckpt_spconv2.pth
