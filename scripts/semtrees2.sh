@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-./tools/dist_train.sh configs/softgroup_backbone_trees.yaml 2
+./tools/dist_train.sh configs/sem/sem1.yaml 2

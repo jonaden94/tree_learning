@@ -1,0 +1,65 @@
+model:
+  channels: 32 # DUNNO
+  num_blocks: 7 # DUNNO
+  semantic_classes: 2 # number of semantic classes
+  instance_classes: 2 # number of semantic classes that are relevant for instance segmentation
+  sem2ins_classes: [0] # directly assign all points predicted to belong to this class into one instance
+  semantic_only: False # only train backbone
+  ignore_label: -100 # this does not occur for me
+  grouping_cfg:
+    score_thr: 0.2 # not that relevant for me but i guess it does not hurt
+    radius: 0.04 # grouping radius for instance proposals
+    mean_active: 300 # DUNNO
+    class_numpoint_mean: [-1, 7000] #todo, this is of course not yet the rightmean number of points per tree
+    npoint_thr: 0.05  # multiply this value with class_num_point_mean to filter out grouped instances of small size (absolute if class_numpoint == -1, relative if class_numpoint != -1 )
+    ignore_classes: [0] # classes ignored during grouping. I guess this should be the same as sem2ins_classes since there grouping is not necessary since there is only 1 instance there
+  instance_voxel_cfg:
+    scale: 50 # determines voxel size (1/50)
+    spatial_shape: 20 # DUNNO
+  train_cfg:
+    max_proposal_num: 200 # maximum number of proposals per example (more will be truncated)
+    pos_iou_thr: 0.5 # iou to determine whether instance proposal is a positive sample
+  test_cfg:
+    cls_score_thr: 0.001 # unclear what this is
+    mask_score_thr: -0.5 # threshold to classify background and foreground in segmentation
+    min_npoint: 100 # minimum number of points for each instance
+    x4_split: False # there because of code compatibility
+  fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear'] # modules whose parameters are not updated
+
+data:
+  train:
+    data_root: 'data/trees/train'
+    training: True
+    voxel_cfg:
+      scale: 50
+      spatial_shape: [128, 512]
+  test:
+    data_root: 'data/trees/val'
+    training: False
+    voxel_cfg:
+      scale: 50
+      spatial_shape: [128, 512]
+
+dataloader:
+  train:
+    batch_size: 2
+    num_workers: 4
+  test:
+    batch_size: 1
+    num_workers: 1
+
+optimizer:
+  type: 'Adam'
+  lr: 0.002 # reduced learning rate by factor 1/2 since batch_size reduced by factor 2
+
+save_cfg:
+  semantic: True
+  offset: True
+  instance: True
+
+fp16: False
+epochs: 20
+step_epoch: 0
+save_freq: 2
+pretrain: 'work_dirs/sem1/latest.pth'
+work_dir: ''

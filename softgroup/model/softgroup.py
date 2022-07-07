@@ -98,19 +98,6 @@ class SoftGroup(nn.Module):
         else:
             return self.forward_test(**batch)
 
-    # batch_idxs
-        # length of "coords" or "coords_float" (I guess the number of original points in batch)
-        # values that contain indices for which points belong to which observation (values from 0 to 3 for batch size of 4)
-    # voxel_coords
-        # length shorter than original points (I guess because of voxelization)
-        # first column consists of batch indexes for voxels
-        # contains voxel values for each dimension (voxel values are >= 0 and have different maximum values for each dimension)
-    # p2vmap
-        # 
-
-
-
-
     @cuda_cast
     def forward_train(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
                       semantic_labels, instance_labels, instance_pointnum, instance_cls,
