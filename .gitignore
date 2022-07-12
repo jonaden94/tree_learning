@@ -64,6 +64,7 @@ dist/
 *.tsv
 *.npy
 *.zip
+*.pth
 
 # large files
 /data/trees/
