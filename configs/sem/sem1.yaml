@@ -10,11 +10,11 @@ model:
     score_thr: 0.2 # not that relevant for me but i guess it does not hurt
     radius: 0.04 # grouping radius for instance proposals
     mean_active: 300 # DUNNO
-    class_numpoint_mean: [-1, 7000] #todo, this is of course not yet the rightmean number of points per tree
+    class_numpoint_mean: [-1, 10000] #todo, this is of course not yet the rightmean number of points per tree
     npoint_thr: 0.05  # multiply this value with class_num_point_mean to filter out grouped instances of small size (absolute if class_numpoint == -1, relative if class_numpoint != -1 )
     ignore_classes: [0] # classes ignored during grouping. I guess this should be the same as sem2ins_classes since there grouping is not necessary since there is only 1 instance there
   instance_voxel_cfg:
-    scale: 50 # determines voxel size (1/50)
+    scale: 20 # determines voxel size (1/50)
     spatial_shape: 20 # DUNNO
   train_cfg:
     max_proposal_num: 200 # maximum number of proposals per example (more will be truncated)
@@ -31,13 +31,13 @@ data:
     data_root: 'data/trees/train'
     training: True
     voxel_cfg:
-      scale: 50
+      scale: 20
       spatial_shape: [128, 512]
   test:
     data_root: 'data/trees/val'
     training: False
     voxel_cfg:
-      scale: 50
+      scale: 20
       spatial_shape: [128, 512]
 
 dataloader:

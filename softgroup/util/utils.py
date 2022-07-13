@@ -1,6 +1,7 @@
 import functools
 import os
 import os.path as osp
+import random
 from collections import OrderedDict
 from math import cos, pi
 
@@ -152,6 +153,19 @@ def get_max_memory():
     if world_size > 1:
         dist.reduce(mem_mb, 0, op=dist.ReduceOp.MAX)
     return mem_mb.item()
+
+def get_data_paths(root_dir, epochs, training):
+    data_paths = os.listdir(root_dir)
+    data_paths = [os.path.join(root_dir, data_path) for data_path in data_paths]
+
+    # infer number of samples per epoch and partition data_paths accordingly
+    if training:
+        n_samples = int(len(data_paths) / epochs)
+        random.shuffle(data_paths)
+        data_paths = [data_paths[i * n_samples: (i+1) * n_samples] for i in range(epochs)]
+
+    return data_paths
+
 
 
 def cuda_cast(func):

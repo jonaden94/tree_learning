@@ -1,6 +1,5 @@
 import math
 import os.path as osp
-import os
 
 import numpy as np
 import scipy.interpolate
@@ -9,7 +8,7 @@ import torch
 
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data.distributed import DistributedSampler, Sampler
 
 from ..ops import voxelization_idx
 
@@ -23,29 +22,24 @@ class TreeDataset(Dataset):
 
     def __init__(self,
                  data_root,
+                 data_paths,
                  voxel_cfg=None,
                  training=True,
                  logger=None):
         self.data_root = data_root
+        self.data_paths = data_paths
         self.voxel_cfg = voxel_cfg
         self.training = training
         self.logger = logger
         self.mode = 'train' if training else 'test'
-        self.filenames = self.get_filenames()
-        self.logger.info(f'Load {self.mode} dataset: {len(self.filenames)} scans')
+        self.logger.info(f'Load {self.mode} dataset: {len(self.data_paths)} scans')
 
-    # GET LIST OF FILENAMES TO SAVE IN SELF.FILENAMES
-    def get_filenames(self):
-        filenames = os.listdir(self.data_root)
-        return filenames
-
-    # LOAD SPECIFIC FILE (TO USE IN GETITEM)
-    def load(self, filename):
-        return torch.load(osp.join(self.data_root, filename))
+    def load(self, data_path):
+        return torch.load(data_path)
 
     # LEN FUNC
     def __len__(self):
-        return len(self.filenames)
+        return len(self.data_paths)
 
     # ELASTIC TRANSFORMATION OF EXAMPLE
     def elastic(self, x, gran, mag):
@@ -104,11 +98,14 @@ class TreeDataset(Dataset):
 
 
     # TRAINING TRANSFORMATIONS
-    def transform_train(self, xyz, semantic_label, instance_label, aug_prob=1.0):
+    def transform_train(self, xyz, semantic_label, instance_label, instance_label_original, aug_prob=1.0):
+
         # APPLY NORMAL DATA AUGMENTATIONS
         xyz_middle = self.dataAugment(xyz, True, True, True, aug_prob)
+
         # SCALE ORIGINAL VALUES WITH 50
         xyz = xyz_middle * self.voxel_cfg.scale
+
         # APPLY ELASTIC TRANSFORMATION
         # if np.random.rand() < aug_prob:
         #     xyz = self.elastic(xyz, 6 * self.voxel_cfg.scale // 50, 40 * self.voxel_cfg.scale / 50)
@@ -119,22 +116,23 @@ class TreeDataset(Dataset):
         # MAKE SCALED POINTS HAVE ALL POSITIVE VALUES
         xyz = xyz - xyz.min(0)
 
-        return xyz, xyz_middle, semantic_label, instance_label
+        return xyz, xyz_middle, semantic_label, instance_label, instance_label_original
 
     # ALSO TRANSFORMATIONS BUT LESS THAN DURING TRAINING
-    def transform_test(self, xyz, semantic_label, instance_label):
+    def transform_test(self, xyz, semantic_label, instance_label, instance_label_original):
+
         xyz_middle = self.dataAugment(xyz, False, False, False)
         xyz = xyz_middle * self.voxel_cfg.scale
         xyz = xyz - xyz.min(0)
-        return xyz, xyz_middle, semantic_label, instance_label
+        return xyz, xyz_middle, semantic_label, instance_label, instance_label_original
 
     def __getitem__(self, index):
-        filename = self.filenames[index]
-        data = self.load(filename)
+        data_path = self.data_paths[index]
+        data = self.load(data_path)
         data = self.transform_train(*data) if self.training else self.transform_test(*data)
         if data is None:
             return None
-        xyz, xyz_middle, semantic_label, instance_label = data # XYZ MIDDLE ARE THE POINTS ON WHICH STANDARD DATA TRANSFORMATIONS WERE APPLIED (but only select cropped indices); ON XYZ ALSO ELASTIC, CROPPING, SCALING AND SHIFTING ARE APPLIED SUCH THAT ALL VALUES ARE POSITIVE
+        xyz, xyz_middle, semantic_label, instance_label, instance_label_original = data # XYZ MIDDLE ARE THE POINTS ON WHICH STANDARD DATA TRANSFORMATIONS WERE APPLIED (but only select cropped indices); ON XYZ ALSO ELASTIC, CROPPING, SCALING AND SHIFTING ARE APPLIED SUCH THAT ALL VALUES ARE POSITIVE
         info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label) # GET ALL INSTANCE RELATED INFO (SEE ABOVE)
         inst_num, inst_pointnum, inst_cls, pt_offset_label = info
         coord = torch.from_numpy(xyz).long()
@@ -142,10 +140,11 @@ class TreeDataset(Dataset):
 
         semantic_label = torch.from_numpy(semantic_label)
         instance_label = torch.from_numpy(instance_label)
+        instance_label_original = torch.from_numpy(instance_label_original)
         pt_offset_label = torch.from_numpy(pt_offset_label)
-        scan_id = [filename.replace(".pth", "")]
+        scan_id = [data_path.replace(self.data_root, "").replace(".pth", "").replace("/", "")]
 
-        return (scan_id, coord, coord_float, semantic_label, instance_label, inst_num,
+        return (scan_id, coord, coord_float, semantic_label, instance_label, instance_label_original, inst_num,
                 inst_pointnum, inst_cls, pt_offset_label)
 
         # coord: coordinates of fully augmented data (scaled and forced to non float values and elastically transformed compared to coord_float)
@@ -163,6 +162,7 @@ class TreeDataset(Dataset):
         coords_float = []
         semantic_labels = []
         instance_labels = []
+        instance_labels_original = []
 
         instance_pointnum = []  # (total_nInst), int
         instance_cls = []  # (total_nInst), long
@@ -175,7 +175,7 @@ class TreeDataset(Dataset):
             if data is None:
                 continue
 
-            (scan_id, coord, coord_float, semantic_label, instance_label, inst_num,
+            (scan_id, coord, coord_float, semantic_label, instance_label, instance_label_original, inst_num,
              inst_pointnum, inst_cls, pt_offset_label) = data # GET RESULT FROM GETITEM AND SAVE AS TUPLE
             instance_label[np.where(instance_label != -100)] += total_inst_num # THIS RESULTS IN A CONSECUTIVE LABELING OF INSTANCES IN A BATCH. E.G. WHEN THERE ARE 30 INSTANCES IN THE WHOLE BATCH THEY WILL BE LABELED 1, 2, 3, 4, .., 30
             total_inst_num += inst_num # COUNT TOTAL INSTANCE NUMBER IN WHOLE BATCH
@@ -183,6 +183,7 @@ class TreeDataset(Dataset):
             coords_float.append(coord_float)
             semantic_labels.append(semantic_label)
             instance_labels.append(instance_label)
+            instance_labels_original.append(instance_label_original)
             instance_pointnum.extend(inst_pointnum)
             instance_cls.extend(inst_cls)
             pt_offset_labels.append(pt_offset_label)
@@ -198,6 +199,7 @@ class TreeDataset(Dataset):
         coords_float = torch.cat(coords_float, 0).to(torch.float32)  # float (N, 3)
         semantic_labels = torch.cat(semantic_labels, 0).long()  # long (N)
         instance_labels = torch.cat(instance_labels, 0).long()  # long (N)
+        instance_labels_original = torch.cat(instance_labels_original, 0).long() # long (N)
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
         instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
         pt_offset_labels = torch.cat(pt_offset_labels).float()
@@ -220,6 +222,7 @@ class TreeDataset(Dataset):
             'coords_float': coords_float,
             'semantic_labels': semantic_labels,
             'instance_labels': instance_labels,
+            'instance_labels_original': instance_labels_original,
             'instance_pointnum': instance_pointnum,
             'instance_cls': instance_cls,
             'pt_offset_labels': pt_offset_labels,
@@ -247,6 +250,7 @@ class TreeDataset(Dataset):
 def build_dataloader(dataset, batch_size=1, num_workers=1, training=True, dist=False):
     shuffle = training
     sampler = DistributedSampler(dataset, shuffle=shuffle) if dist else None
+    
     if sampler is not None:
         shuffle = False
     if training:
@@ -270,3 +274,7 @@ def build_dataloader(dataset, batch_size=1, num_workers=1, training=True, dist=F
             sampler=sampler,
             drop_last=False,
             pin_memory=True)
+
+
+
+

@@ -20,7 +20,7 @@ from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_sem
 from softgroup.util import (AverageMeter, SummaryWriter, build_optimizer, checkpoint_save,
                             collect_results_gpu, cosine_lr_after_step, get_dist_info,
                             get_max_memory, get_root_logger, init_dist, is_main_process,
-                            is_multiple, is_power2, load_checkpoint)
+                            is_multiple, is_power2, load_checkpoint, get_data_paths)
 
 
 def get_args():
@@ -178,16 +178,6 @@ def main():
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
 
-    # data
-    train_set = TreeDataset(**cfg.data.train, logger=logger)
-
-    val_set = TreeDataset(**cfg.data.test, logger=logger)
-    train_loader = build_dataloader(
-        train_set, training=True, dist=args.dist, **cfg.dataloader.train)
-    val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
-
-    test = next(iter(train_loader))
-
     # optim
     optimizer = build_optimizer(model, cfg.optimizer)
 
@@ -200,9 +190,20 @@ def main():
         logger.info(f'Load pretrain from {cfg.pretrain}')
         load_checkpoint(cfg.pretrain, logger, model)
 
+    # data
+    data_paths_train = get_data_paths(cfg.data.train.data_root, cfg.epochs, training=True)
+    data_paths_val = get_data_paths(cfg.data.test.data_root, cfg.epochs, training=False)
+
     # train and val
     logger.info('Training')
     for epoch in range(start_epoch, cfg.epochs + 1):
+
+        # load different dataset for every epoch for train
+        train_set = TreeDataset(**cfg.data.train, data_paths=data_paths_train[epoch], logger=logger)
+        val_set = TreeDataset(**cfg.data.test, data_paths=data_paths_val, logger=logger)
+        train_loader = build_dataloader(train_set, training=True, dist=args.dist, **cfg.dataloader.train)
+        val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
+
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
         if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):
             validate(epoch, model, val_loader, cfg, logger, writer)
