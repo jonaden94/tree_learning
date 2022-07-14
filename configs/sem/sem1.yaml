@@ -58,8 +58,8 @@ save_cfg:
   instance: False
 
 fp16: False
-epochs: 20
+epochs: 40
 step_epoch: 0
-save_freq: 2
+save_freq: 1
 pretrain: './hais_ckpt_spconv2.pth'
 work_dir: ''
