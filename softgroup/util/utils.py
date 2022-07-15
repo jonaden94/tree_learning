@@ -154,15 +154,23 @@ def get_max_memory():
         dist.reduce(mem_mb, 0, op=dist.ReduceOp.MAX)
     return mem_mb.item()
 
-def get_data_paths(root_dir, epochs, training):
+def get_data_paths(config, epochs, training):
+
+    if training: 
+        n_examples = config.examples_per_epoch
+        del config.examples_per_epoch
+    root_dir = config.data_root
+    
     data_paths = os.listdir(root_dir)
     data_paths = [os.path.join(root_dir, data_path) for data_path in data_paths]
 
+    # assert that enough training examples exist
+    # if training: assert n_examples * epochs <= len(data_paths), "not enough examples in root_dir"
+
     # infer number of samples per epoch and partition data_paths accordingly
     if training:
-        n_samples = int(len(data_paths) / epochs)
         random.shuffle(data_paths)
-        data_paths = [data_paths[i * n_samples: (i+1) * n_samples] for i in range(epochs)]
+        data_paths = [data_paths[i * n_examples: (i+1) * n_examples] for i in range(epochs)]
 
     return data_paths
 

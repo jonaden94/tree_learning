@@ -45,7 +45,7 @@ class SoftGroup(nn.Module):
         block = ResidualBlock # THIS IS JUST A CLASS NOT A CALLABLE
         norm_fn = functools.partial(nn.BatchNorm1d, eps=1e-4, momentum=0.1) # norm_fn IS ALSO JUST A CLASS (OTHER DEFAULT ARGUMENTS THAN NORMAL BATCHNORM1D)
 
-        # backbone
+        # backbone (high level: submanifold convolutions with subsequent u blocks, both 32 channels)
         self.input_conv = spconv.SparseSequential(
             spconv.SubMConv3d(
                 6, channels, kernel_size=3, padding=1, bias=False, indice_key='subm1')) # 6 BECAUSE COORDINATES PLUS RGB
@@ -53,11 +53,11 @@ class SoftGroup(nn.Module):
         self.unet = UBlock(block_channels, norm_fn, 2, block, indice_key_id=1)
         self.output_layer = spconv.SparseSequential(norm_fn(channels), nn.ReLU())
 
-        # point-wise prediction
+        # point-wise prediction (high level: pointwise mlps)
         self.semantic_linear = MLP(channels, semantic_classes, norm_fn=norm_fn, num_layers=2)
         self.offset_linear = MLP(channels, 3, norm_fn=norm_fn, num_layers=2)
 
-        # topdown refinement path
+        # topdown refinement path (high level: tiny u-net on proposal; then pointwise mlp for mask prediction and linear layer for classification and predicted iou score)
         if not semantic_only:
             self.tiny_unet = UBlock([channels, 2 * channels], norm_fn, 2, block, indice_key_id=11)
             self.tiny_unet_outputlayer = spconv.SparseSequential(norm_fn(channels), nn.ReLU())
@@ -65,13 +65,16 @@ class SoftGroup(nn.Module):
             self.mask_linear = MLP(channels, instance_classes + 1, norm_fn=None, num_layers=2)
             self.iou_score_linear = nn.Linear(channels, instance_classes + 1)
 
+        # initialize some weights manually
         self.init_weights()
 
+        # set gradient update to false for fixed modules
         for mod in fixed_modules:
             mod = getattr(self, mod)
             for param in mod.parameters():
                 param.requires_grad = False
-    # INIT WEIGHTS
+
+    # initialize some weights manually
     def init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm1d):
@@ -84,6 +87,7 @@ class SoftGroup(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
 
+    # normal train method to set to training mode, but manually set batchnorms in fixed modules to eval mode
     def train(self, mode=True):
         super().train(mode)
         for mod in self.fixed_modules:
@@ -92,12 +96,14 @@ class SoftGroup(nn.Module):
                 if isinstance(m, nn.BatchNorm1d):
                     m.eval()
 
+    # forward function; called when model is called
     def forward(self, batch, return_loss=False):
         if return_loss:
             return self.forward_train(**batch)
         else:
             return self.forward_test(**batch)
 
+    # forward method used during training
     @cuda_cast
     def forward_train(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
                       semantic_labels, instance_labels, instance_pointnum, instance_cls,
@@ -137,6 +143,18 @@ class SoftGroup(nn.Module):
             losses.update(instance_loss)
         return self.parse_losses(losses)
 
+    # simply the backbone to get semantic scores and offset features as well as point features for top down refinement
+    def forward_backbone(self, input, input_map):
+        output = self.input_conv(input)
+        output = self.unet(output)
+        output = self.output_layer(output)
+        output_feats = output.features[input_map.long()]
+
+        semantic_scores = self.semantic_linear(output_feats)
+        pt_offsets = self.offset_linear(output_feats)
+        return semantic_scores, pt_offsets, output_feats
+
+    # simply return semantic and offset loss (instance and semantic labels equalling -100 will be ignored in loss calculation)
     def point_wise_loss(self, semantic_scores, pt_offsets, semantic_labels, instance_labels,
                         pt_offset_labels):
         losses = {}
@@ -150,6 +168,7 @@ class SoftGroup(nn.Module):
         else:
             offset_loss = F.l1_loss(
                 pt_offsets[pos_inds], pt_offset_labels[pos_inds], reduction='sum') / pos_inds.sum()
+        
         losses['offset_loss'] = offset_loss
         return losses
 
@@ -217,20 +236,17 @@ class SoftGroup(nn.Module):
             losses[loss_name] = loss_value.item()
         return loss, losses
 
+    # only works with batch size 1; returns ground truths for all values of interest and corresponding # TODO
     @cuda_cast
     def forward_test(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
-                     semantic_labels, instance_labels, pt_offset_labels, spatial_shape, batch_size,
+                     semantic_labels, instance_labels, instance_labels_original, pt_offset_labels, spatial_shape, batch_size,
                      scan_ids, **kwargs):
         feats = torch.cat((feats, coords_float), 1)
         voxel_feats = voxelization(feats, p2v_map)
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
         semantic_scores, pt_offsets, output_feats = self.forward_backbone(
-            input, v2p_map, x4_split=self.test_cfg.x4_split)
-        if self.test_cfg.x4_split:
-            coords_float = self.merge_4_parts(coords_float)
-            semantic_labels = self.merge_4_parts(semantic_labels)
-            instance_labels = self.merge_4_parts(instance_labels)
-            pt_offset_labels = self.merge_4_parts(pt_offset_labels)
+            input, v2p_map)
+
         semantic_preds = semantic_scores.max(1)[1]
         ret = dict(
             scan_id=scan_ids[0],
@@ -239,8 +255,9 @@ class SoftGroup(nn.Module):
             semantic_labels=semantic_labels.cpu().numpy(),
             offset_preds=pt_offsets.cpu().numpy(),
             offset_labels=pt_offset_labels.cpu().numpy(),
-            instance_labels=instance_labels.cpu().numpy())
-        if not self.semantic_only:
+            instance_labels=instance_labels.cpu().numpy(),
+            instance_labels_original=instance_labels_original.cpu().numpy())
+        if not self.semantic_only: # TODO
             proposals_idx, proposals_offset = self.forward_grouping(semantic_scores, pt_offsets,
                                                                     batch_idxs, coords_float,
                                                                     self.grouping_cfg)
@@ -253,51 +270,6 @@ class SoftGroup(nn.Module):
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
             ret.update(dict(pred_instances=pred_instances, gt_instances=gt_instances))
         return ret
-
-    def forward_backbone(self, input, input_map, x4_split=False):
-        if x4_split:
-            output_feats = self.forward_4_parts(input, input_map)
-            output_feats = self.merge_4_parts(output_feats)
-        else:
-            output = self.input_conv(input)
-            output = self.unet(output)
-            output = self.output_layer(output)
-            output_feats = output.features[input_map.long()]
-
-        semantic_scores = self.semantic_linear(output_feats)
-        pt_offsets = self.offset_linear(output_feats)
-        return semantic_scores, pt_offsets, output_feats
-
-    def forward_4_parts(self, x, input_map):
-        """Helper function for s3dis: devide and forward 4 parts of a scene."""
-        outs = []
-        for i in range(4):
-            inds = x.indices[:, 0] == i
-            feats = x.features[inds]
-            coords = x.indices[inds]
-            coords[:, 0] = 0
-            x_new = spconv.SparseConvTensor(
-                indices=coords, features=feats, spatial_shape=x.spatial_shape, batch_size=1)
-            out = self.input_conv(x_new)
-            out = self.unet(out)
-            out = self.output_layer(out)
-            outs.append(out.features)
-        outs = torch.cat(outs, dim=0)
-        return outs[input_map.long()]
-
-    def merge_4_parts(self, x):
-        """Helper function for s3dis: take output of 4 parts and merge them."""
-        inds = torch.arange(x.size(0), device=x.device)
-        p1 = inds[::4]
-        p2 = inds[1::4]
-        p3 = inds[2::4]
-        p4 = inds[3::4]
-        ps = [p1, p2, p3, p4]
-        x_split = torch.split(x, [p.size(0) for p in ps])
-        x_new = torch.zeros_like(x)
-        for i, p in enumerate(ps):
-            x_new[p] = x_split[i]
-        return x_new
 
     @force_fp32(apply_to=('semantic_scores, pt_offsets'))
     def forward_grouping(self,
@@ -415,6 +387,7 @@ class SoftGroup(nn.Module):
             instances.append(pred)
         return instances
 
+    # just recode instance labels into 1000 + 
     def get_gt_instances(self, semantic_labels, instance_labels):
         """Get gt instances for evaluation."""
         # convert to evaluation format 0: ignore, 1->N: valid

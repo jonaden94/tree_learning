@@ -129,6 +129,10 @@ class TreeDataset(Dataset):
     def __getitem__(self, index):
         data_path = self.data_paths[index]
         data = self.load(data_path)
+
+        if len(data) == 3: 
+            data = data + (np.ones(len(data[1])), )
+
         data = self.transform_train(*data) if self.training else self.transform_test(*data)
         if data is None:
             return None
@@ -230,21 +234,26 @@ class TreeDataset(Dataset):
             'batch_size': batch_id,
         }
 
-        # coords: TORCH TENSOR LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. FIRST COLUMN INDICATES TO WHICH EXAMPLE IN THE BATCH A POINT BELONGS TO
-        # batch_idxs: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. SAME AS FIRST COLUMN OF COORDS
-        # voxel_coords: VOXELIZED COORDINATES (TYPICALLY OF SMALLER LENGTH THAN COORDS OR COORDS_FLOAT)
-
-        # p2v_map: UNFORTUNATELY I DONT KNOW WHAT EXACTLY THIS IS BUT I GUESS IT SOMEHOW CONNECTS THE VOXELS TO THE ORIGINAL POINTS
-        # v2p_map: UNFORTUNATELY I DONT KNOW WHAT EXACTLY THIS IS BUT I GUESS IT SOMEHOW CONNECTS THE VOXELS TO THE ORIGINAL POINTS
-
-        # coords_float: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH. NO ELASTIC TRANSFORMATIONS AND NO SCALING COMPARED TO COORDS
-        # semantic_labels: TORCH TENSOR OF SEMANTIC LABELS OF LENGHT OF TOTAL NUMBER OF POINTS IN BATCH
-        # instance_labels: TORCH TENSOR OF INSTANCE LABELS (LABELED CONSECUTIVELY OVER WHOLE BATCH) OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH
-        # instance_pointnum: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF INSTANCES THAT CONTAINS NUMBER OF POINTS FOR EACH INSTANCE
-        # instance_cls: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF INSTANCES THAT CONTAINS SEMANTIC CLASS FOR EACH INSTANCE
-        # pt_offset_labels: TORCH TENSOR OF LENGTH OF TOTAL NUMBER OF POINTS IN BATCH WITH OFFSET VECTORS FOR EACH POINT
-        # spatial_shape: 1D-ARRAY OF LENGTH 3 THAT GIVES EXTENT ALONG X Y AND Z DIMENSIONS OF ALL POINTS IN BATCH: THE RESPECTIVE VALUES ARE CLIPPED TO BE IN RANGE OF [128, infinity] BY DEFAULT
-        # batch_size: BATCH SIZE
+        # Scan_ids: list of length of batch size (2) with prefix of name of torch file
+        # Coords: (317000x4) first column batch index indicator, then cords as ints (all transformations applied)
+        # Batch_idxs: (317000) batch indexes count from 0 
+        # Voxel_coords: (208000x4) same content as coords but lower size (some were discarded)
+        
+        # P2v_map: (208000x12) first column contains values from 1 to 11, columns two to 12 (can also be other number than 12) contain values between 0 and len(cords) – 1. 
+        # It might be the case that the last 11 columns indicate all points a voxel corresponds to and the first column indicates which point is most central in the voxel. 
+        # It seems that the sum of unique values (columnwise) from columns 2 to 12 roughly equals 317000 (for some reason it is a little more than 317000, at least in my new dataloader, maybe because 0 is just filled in when the voxel does not correspond to a point anymore). When taking unique values over all columns from 2 to 12 we get exactly 317000 (0 – 316999)
+        # V2p_map: (317000) I guess this vector includes which voxel a point is associated to
+        
+        # Cords_float: (317000x3), contains original coordinates (no elastic trafos and scaling applied)
+        # Feats: (317000x3), rgb values that seem to be normalized between -1 and 1 plus jitter (dtype torch.float32)
+        # Semantic_labels:  (317000) semantic labels 0 and 1 (0 ground, 1 trees)
+        # Instance_labels: (317000) instance labels (0, 1, 2, …, as many instances as there are in batch - 1)
+        # instance_labels_original: (317000) original tree numbers
+        # instance_pointnum: (as many instances as there are in a batch - 1) contains number of points per instance
+        # Instance_cls: (as many instances as there are in a batch - 1) 0 or 1 (instance classes for each instance)
+        # Pt_offset_labels: (317000x3) offset labels on original scale
+        # Spatial_shape: (3) max – min value of coords
+        # Batch_size (1) 2 since 2 is batch size
 
 
 def build_dataloader(dataset, batch_size=1, num_workers=1, training=True, dist=False):

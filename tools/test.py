@@ -15,7 +15,7 @@ from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_sem
                                   evaluate_semantic_miou)
 from softgroup.model import SoftGroup
 from softgroup.util import (collect_results_gpu, get_dist_info, get_root_logger, init_dist,
-                            is_main_process, load_checkpoint, rle_decode)
+                            is_main_process, load_checkpoint, rle_decode, get_data_paths)
 from torch.nn.parallel import DistributedDataParallel
 
 
@@ -88,11 +88,15 @@ def main():
     logger.info(f'Load state dict from {args.checkpoint}')
     load_checkpoint(args.checkpoint, logger, model)
 
-    dataset = TreeDataset(**cfg.data.test, logger=logger)
+
+
+    # data
+    data_paths = get_data_paths(cfg.data.test, cfg.epochs, training=False)
+    dataset = TreeDataset(**cfg.data.test, data_paths=data_paths, logger=logger)
     dataloader = build_dataloader(dataset, training=False, dist=args.dist, **cfg.dataloader.test)
     results = []
     scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_labels = [], [], [], [], [], []
-    inst_labels, pred_insts, gt_insts = [], [], []
+    inst_labels, inst_labels_original, pred_insts, gt_insts = [], [], [], []
     _, world_size = get_dist_info()
     progress_bar = tqdm(total=len(dataloader) * world_size, disable=not is_main_process())
     with torch.no_grad():
@@ -112,6 +116,7 @@ def main():
             offset_preds.append(res['offset_preds'])
             offset_labels.append(res['offset_labels'])
             inst_labels.append(res['instance_labels'])
+            inst_labels_original.append(res['instance_labels_original'])
             if not cfg.model.semantic_only:
                 pred_insts.append(res['pred_instances'])
                 gt_insts.append(res['gt_instances'])
@@ -139,6 +144,7 @@ def main():
         if cfg.save_cfg.instance:
             save_pred_instances(args.out, 'pred_instance', scan_ids, pred_insts)
             save_gt_instances(args.out, 'gt_instance', scan_ids, gt_insts)
+            save_gt_instances(args.out, 'gt_instance_original', scan_ids, inst_labels_original)
 
 
 if __name__ == '__main__':

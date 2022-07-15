@@ -191,15 +191,15 @@ def main():
         load_checkpoint(cfg.pretrain, logger, model)
 
     # data
-    data_paths_train = get_data_paths(cfg.data.train.data_root, cfg.epochs, training=True)
-    data_paths_val = get_data_paths(cfg.data.test.data_root, cfg.epochs, training=False)
+    data_paths_train = get_data_paths(cfg.data.train, cfg.epochs, training=True)
+    data_paths_val = get_data_paths(cfg.data.test, cfg.epochs, training=False)
 
     # train and val
     logger.info('Training')
     for epoch in range(start_epoch, cfg.epochs + 1):
 
         # load different dataset for every epoch for train
-        train_set = TreeDataset(**cfg.data.train, data_paths=data_paths_train[epoch-1], logger=logger)
+        train_set = TreeDataset(**cfg.data.train, data_paths=data_paths_train[0], logger=logger)
         val_set = TreeDataset(**cfg.data.test, data_paths=data_paths_val, logger=logger)
         train_loader = build_dataloader(train_set, training=True, dist=args.dist, **cfg.dataloader.train)
         val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
