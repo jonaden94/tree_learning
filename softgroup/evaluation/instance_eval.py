@@ -305,6 +305,7 @@ class ScanNetEval(object):
 
         return gt2pred, pred2gt
 
+    # irrelevant
     def print_results(self, avgs):
         sep = ''
         col1 = ':'
@@ -359,6 +360,7 @@ class ScanNetEval(object):
         print('#' * lineLen)
         print()
 
+    # irrelevant
     def write_result_file(self, avgs, filename):
         _SPLITTER = ','
         with open(filename, 'w') as f:
@@ -369,6 +371,7 @@ class ScanNetEval(object):
                 ap25 = avgs['classes'][class_name]['ap25%']
                 f.write(_SPLITTER.join([str(x) for x in [class_name, ap, ap50, ap25]]) + '\n')
 
+    
     def evaluate(self, pred_list, gt_list):
         """
         Args:

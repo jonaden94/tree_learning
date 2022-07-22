@@ -399,7 +399,8 @@ class SoftGroup(nn.Module):
             offset_labels=pt_offset_labels.cpu().numpy(),
             instance_labels=instance_labels.cpu().numpy(),
             instance_labels_original=instance_labels_original.cpu().numpy())
-        if not self.semantic_only: # TODO
+
+        if not self.semantic_only:
             proposals_idx, proposals_offset = self.forward_grouping(semantic_scores, pt_offsets,
                                                                     batch_idxs, coords_float,
                                                                     self.grouping_cfg)
@@ -407,9 +408,14 @@ class SoftGroup(nn.Module):
                                                               output_feats, coords_float,
                                                               **self.instance_voxel_cfg)
             _, cls_scores, iou_scores, mask_scores = self.forward_instance(inst_feats, inst_map)
+
+            # list of length nproposals (contains scan_id, class prediction, score prediction and the mask (length of total number of points in chunk) in a weird format)
             pred_instances = self.get_instances(scan_ids[0], proposals_idx, semantic_scores,
                                                 cls_scores, iou_scores, mask_scores)
+                                                
+            # length of total number of points in a chunk (instance labels in another format)
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
+
             ret.update(dict(pred_instances=pred_instances, gt_instances=gt_instances))
         return ret
 
@@ -417,25 +423,25 @@ class SoftGroup(nn.Module):
     @force_fp32(apply_to=('semantic_scores', 'cls_scores', 'iou_scores', 'mask_scores'))
     def get_instances(self, scan_id, proposals_idx, semantic_scores, cls_scores, iou_scores,
                       mask_scores):
-        num_instances = cls_scores.size(0)
-        num_points = semantic_scores.size(0)
-        cls_scores = cls_scores.softmax(1)
-        semantic_pred = semantic_scores.max(1)[1]
+        num_instances = cls_scores.size(0) # n valid proposals (clusters that are large enough)
+        num_points = semantic_scores.size(0) # npoints in chunk
+        cls_scores = cls_scores.softmax(1) # predicted class of each instance (ground, tree, background; ground should and is always close to zero in prediction)
+        semantic_pred = semantic_scores.max(1)[1] # semantic prediction of all points
         cls_pred_list, score_pred_list, mask_pred_list = [], [], []
         for i in range(self.instance_classes):
             if i in self.sem2ins_classes:
                 cls_pred = cls_scores.new_tensor([i + 1], dtype=torch.long)
                 score_pred = cls_scores.new_tensor([1.], dtype=torch.float32)
-                mask_pred = (semantic_pred == i)[None, :].int()
+                mask_pred = (semantic_pred == i)[None, :].int() # mask_pred has lenght of total number of points in chunk (contains 0 and 1). 1's indicate which points belong to final masked instance
             else:
                 cls_pred = cls_scores.new_full((num_instances, ), i + 1, dtype=torch.long)
-                cur_cls_scores = cls_scores[:, i]
+                cur_cls_scores = cls_scores[:, i] # get column of prediction corresponding to trees (second one)
                 cur_iou_scores = iou_scores[:, i]
                 cur_mask_scores = mask_scores[:, i]
-                score_pred = cur_cls_scores * cur_iou_scores.clamp(0, 1)
+                score_pred = cur_cls_scores * cur_iou_scores.clamp(0, 1) # arrive at score for instance (combination of certainty score for class and predicted iou)
                 mask_pred = torch.zeros((num_instances, num_points), dtype=torch.int, device='cuda')
-                mask_inds = cur_mask_scores > self.test_cfg.mask_score_thr
-                cur_proposals_idx = proposals_idx[mask_inds].long()
+                mask_inds = cur_mask_scores > self.test_cfg.mask_score_thr # it seems that this value is right now never negative. so there seems to be no masking happening right now
+                cur_proposals_idx = proposals_idx[mask_inds].long() # mask out indices from proposals_idx (not happening I think)
                 mask_pred[cur_proposals_idx[:, 0], cur_proposals_idx[:, 1]] = 1
 
                 # filter low score instance
@@ -469,7 +475,7 @@ class SoftGroup(nn.Module):
         return instances
 
 
-    # just recode instance labels into 1000 + 
+    # just recode instance labels into 1000 + instance index
     def get_gt_instances(self, semantic_labels, instance_labels):
         """Get gt instances for evaluation."""
         # convert to evaluation format 0: ignore, 1->N: valid

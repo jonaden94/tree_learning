@@ -121,11 +121,11 @@ def validate(epoch, model, val_loader, cfg, logger, writer):
         logger.info('Evaluate semantic segmentation and offset MAE')
         miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
         acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-        mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
+        mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels, # look what this is
                                   cfg.model.ignore_label, logger)
-        writer.add_scalar('val/mIoU', miou, epoch)
-        writer.add_scalar('val/Acc', acc, epoch)
-        writer.add_scalar('val/Offset MAE', mae, epoch)
+        writer.add_scalar('val/mIoU_semantic', miou, epoch)
+        writer.add_scalar('val/Acc_semantic', acc, epoch)
+        writer.add_scalar('val/Offset_MAE', mae, epoch)
 
 
 # EXECUTION STARTS HERE
