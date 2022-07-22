@@ -71,7 +71,7 @@ class TreeDataset(Dataset):
         pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0 # -100 IS CHOSEN AS THE MEAN OF THE OBJECT IF IT IS NO INSTANCE (BACKGROUND) THIS RESULTS IN NEGATIVE OFFSET VECTOR
         instance_pointnum = []
         instance_cls = []
-        instance_num = int(instance_label.max()) + 1 # INSTANCE LABELS IN EXAMPLE ARE CODED AS -100, 1, 2, 3, 4, .., max (-100 are points not belonging to any instance)
+        instance_num = int(instance_label.max()) + 1
         for i_ in range(instance_num): # ONLY COUNTS INSTANCES (NOT BACKGROUND)
             inst_idx_i = np.where(instance_label == i_)
             xyz_i = xyz[inst_idx_i]
@@ -130,8 +130,14 @@ class TreeDataset(Dataset):
         data_path = self.data_paths[index]
         data = self.load(data_path)
 
-        if len(data) == 3: 
-            data = data + (np.ones(len(data[1])), )
+        # some temporary stuff
+        # if len(data) == 3: 
+        #     data = data + (np.ones(len(data[1])), )
+        
+        # data = list(data)
+        # data[0] = data[0] / 5
+        # data = tuple(data)
+        #######################################
 
         data = self.transform_train(*data) if self.training else self.transform_test(*data)
         if data is None:

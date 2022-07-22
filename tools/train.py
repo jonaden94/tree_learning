@@ -199,7 +199,7 @@ def main():
     for epoch in range(start_epoch, cfg.epochs + 1):
 
         # load different dataset for every epoch for train
-        train_set = TreeDataset(**cfg.data.train, data_paths=data_paths_train[0], logger=logger)
+        train_set = TreeDataset(**cfg.data.train, data_paths=data_paths_train[epoch-1], logger=logger)
         val_set = TreeDataset(**cfg.data.test, data_paths=data_paths_val, logger=logger)
         train_loader = build_dataloader(train_set, training=True, dist=args.dist, **cfg.dataloader.train)
         val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)

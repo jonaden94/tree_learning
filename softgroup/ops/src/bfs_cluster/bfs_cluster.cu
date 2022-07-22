@@ -12,6 +12,9 @@ All Rights Reserved 2020.
 
 /* ================================== ballquery_batch_p
  * ================================== */
+// n=len(coords), batch_offsets=indexes where batches start, idx=len(n)*mean_active (at beginning filled with zeros)
+// start_len=len(coords)x2 (at beginning filled with zeros), stream=current cuda stream (dunno what this is)
+
 __global__ void ballquery_batch_p_cuda_(int n, int meanActive, float radius,
                                         const float *xyz, const int *batch_idxs,
                                         const int *batch_offsets, int *idx,

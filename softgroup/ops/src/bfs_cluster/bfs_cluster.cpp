@@ -25,6 +25,8 @@ int ballquery_batch_p(at::Tensor xyz_tensor, at::Tensor batch_idxs_tensor,
   int *start_len = start_len_tensor.data_ptr<int>();
 
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+  // n=len(coords), batch_offsets=indexes where batches start, idx=len(n)*mean_active (at beginning filled with zeros)
+  // start_len=len(coords)x2 (at beginning filled with zeros), stream=current cuda stream (dunno what this is)
   int cumsum = ballquery_batch_p_cuda(n, meanActive, radius, xyz, batch_idxs,
                                       batch_offsets, idx, start_len, stream);
   return cumsum;

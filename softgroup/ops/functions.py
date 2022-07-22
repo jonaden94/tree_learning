@@ -193,6 +193,9 @@ class Voxelization(Function):
 
 voxelization = Voxelization.apply
 
+# idx, start_len = ballquery_batch_p(coords_ + pt_offsets_, batch_idxs_, batch_offsets_,
+#                                            radius, mean_active)
+
 
 class BallQueryBatchP(Function):
 
@@ -216,7 +219,7 @@ class BallQueryBatchP(Function):
         assert batch_offsets.is_contiguous() and batch_offsets.is_cuda
 
         while True:
-            idx = torch.cuda.IntTensor(n * meanActive).zero_()
+            idx = torch.cuda.IntTensor(n * meanActive).zero_() # sets elements of tensor to zero
             start_len = torch.cuda.IntTensor(n, 2).zero_()
             nActive = ops.ballquery_batch_p(coords, batch_idxs, batch_offsets, idx, start_len, n,
                                             meanActive, radius)
