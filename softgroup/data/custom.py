@@ -13,9 +13,6 @@ from torch.utils.data.distributed import DistributedSampler, Sampler
 from ..ops import voxelization_idx
 
 
-# perhaps the chunks are still too large and i need to downsample them by 1/4
-
-
 class TreeDataset(Dataset):
 
     CLASSES = ('ground', 'tree')
@@ -23,23 +20,116 @@ class TreeDataset(Dataset):
     def __init__(self,
                  data_root,
                  data_paths,
-                 voxel_cfg=None,
+                 scale=None,
                  training=True,
                  logger=None):
         self.data_root = data_root
         self.data_paths = data_paths
-        self.voxel_cfg = voxel_cfg
+        self.scale = scale
         self.training = training
         self.logger = logger
         self.mode = 'train' if training else 'test'
         self.logger.info(f'Load {self.mode} dataset: {len(self.data_paths)} scans')
 
+
     def load(self, data_path):
         return torch.load(data_path)
 
-    # LEN FUNC
+
     def __len__(self):
         return len(self.data_paths)
+
+
+    def __getitem__(self, index):
+        data_path = self.data_paths[index]
+        data = self.load(data_path)
+
+        data = self.transform_train(*data) if self.training else self.transform_test(*data)
+        if data is None:
+            return None
+        xyz, xyz_middle, semantic_label, instance_label, instance_label_original = data # XYZ MIDDLE ARE THE POINTS ON WHICH STANDARD DATA TRANSFORMATIONS WERE APPLIED (but only select cropped indices); ON XYZ ALSO ELASTIC, CROPPING, SCALING AND SHIFTING ARE APPLIED SUCH THAT ALL VALUES ARE POSITIVE
+        info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label) # GET ALL INSTANCE RELATED INFO (SEE ABOVE)
+        inst_num, inst_pointnum, inst_cls, pt_offset_label = info
+        coord = torch.from_numpy(xyz).long()
+        coord_float = torch.from_numpy(xyz_middle)
+
+        semantic_label = torch.from_numpy(semantic_label)
+        instance_label = torch.from_numpy(instance_label)
+        instance_label_original = torch.from_numpy(instance_label_original)
+        pt_offset_label = torch.from_numpy(pt_offset_label)
+        scan_id = [data_path.replace(self.data_root, "").replace(".pth", "").replace("/", "")]
+
+        return (scan_id, coord, coord_float, semantic_label, instance_label, instance_label_original, inst_num,
+                inst_pointnum, inst_cls, pt_offset_label)
+
+
+    # TRAINING TRANSFORMATIONS
+    def transform_train(self, xyz, semantic_label, instance_label, instance_label_original, aug_prob=1.0):
+
+        # APPLY NORMAL DATA AUGMENTATIONS
+        xyz_middle = self.dataAugment(xyz, True, True, True, aug_prob)
+
+        # SCALE ORIGINAL VALUES WITH 50
+        xyz = xyz_middle * self.scale
+
+        # APPLY ELASTIC TRANSFORMATION
+        # if np.random.rand() < aug_prob:
+        #     xyz = self.elastic(xyz, 6 * self.scale // 50, 40 * self.scale / 50)
+        #     xyz = self.elastic(xyz, 20 * self.scale // 50,
+        #                        160 * self.scale / 50)
+        # xyz_middle = xyz / self.scale
+
+        # MAKE SCALED POINTS HAVE ALL POSITIVE VALUES
+        xyz = xyz - xyz.min(0)
+
+        return xyz, xyz_middle, semantic_label, instance_label, instance_label_original
+
+
+    # ALSO TRANSFORMATIONS BUT LESS THAN DURING TRAINING
+    def transform_test(self, xyz, semantic_label, instance_label, instance_label_original):
+
+        xyz_middle = self.dataAugment(xyz, False, False, False)
+        xyz = xyz_middle * self.scale
+        xyz = xyz - xyz.min(0)
+        return xyz, xyz_middle, semantic_label, instance_label, instance_label_original
+
+
+    # GET INSTANCE RELATED INFO FOR ALL INSTANCES IN AN EXAMPLE (THIS INCLUDES OFFSET VECTOR, INSTANCE CLASS, INSTANCE NUM_POINTS)
+    def getInstanceInfo(self, xyz, instance_label, semantic_label):
+        pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0 # -100 IS CHOSEN AS THE MEAN OF THE OBJECT IF IT IS NO INSTANCE (BACKGROUND) THIS RESULTS IN NEGATIVE OFFSET VECTOR
+        instance_pointnum = []
+        instance_cls = []
+        instance_num = int(instance_label.max()) + 1
+        for i_ in range(instance_num): # ONLY COUNTS INSTANCES (NOT BACKGROUND)
+            inst_idx_i = np.where(instance_label == i_)
+            xyz_i = xyz[inst_idx_i]
+            pt_mean[inst_idx_i] = xyz_i.mean(0) # CALCULATE INSTANCE MEAN
+            instance_pointnum.append(inst_idx_i[0].size)
+            cls_idx = inst_idx_i[0][0]
+            instance_cls.append(semantic_label[cls_idx])
+        pt_offset_label = pt_mean - xyz
+        return instance_num, instance_pointnum, instance_cls, pt_offset_label
+
+
+    # def function with filters that mask out points with norm above threshold or certain tree number (depending on plot)
+    def thingi():
+        pass
+
+
+    # CLASSICAL DATA AUGMENTATIONS HERE IMPLEMENTED AS A SINGLE MATRIX MULTIPLICATION
+    def dataAugment(self, xyz, jitter=False, flip=False, rot=False, prob=1.0):
+        m = np.eye(3)
+        if jitter and np.random.rand() < prob:
+            m += np.random.randn(3, 3) * 0.1 # ADD NORMALLY DISTRIBUTED VALUES TO IDENTITY MATRIX IF RANDOM NUMBER IS SMALLER THAN PROB (ALWAYS IF PROB=1)
+        if flip and np.random.rand() < prob:
+            m[0][0] *= np.random.randint(0, 2) * 2 - 1 # RANDOM FLIP OF X COORDINATE (SAME CONDITION AS ABOVE)
+        if rot and np.random.rand() < prob:
+            theta = np.random.rand() * 2 * math.pi
+            m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0], # RANDOM ROTATION (SAME CONDITION AS ABOVE)
+                              [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
+
+        return np.matmul(xyz, m)
+
 
     # ELASTIC TRANSFORMATION OF EXAMPLE
     def elastic(self, x, gran, mag):
@@ -66,105 +156,6 @@ class TreeDataset(Dataset):
 
         return x + g(x) * mag
 
-    # GET INSTANCE RELATED INFO FOR ALL INSTANCES IN AN EXAMPLE (THIS INCLUDES OFFSET VECTOR, INSTANCE CLASS, INSTANCE NUM_POINTS)
-    def getInstanceInfo(self, xyz, instance_label, semantic_label):
-        pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0 # -100 IS CHOSEN AS THE MEAN OF THE OBJECT IF IT IS NO INSTANCE (BACKGROUND) THIS RESULTS IN NEGATIVE OFFSET VECTOR
-        instance_pointnum = []
-        instance_cls = []
-        instance_num = int(instance_label.max()) + 1
-        for i_ in range(instance_num): # ONLY COUNTS INSTANCES (NOT BACKGROUND)
-            inst_idx_i = np.where(instance_label == i_)
-            xyz_i = xyz[inst_idx_i]
-            pt_mean[inst_idx_i] = xyz_i.mean(0) # CALCULATE INSTANCE MEAN
-            instance_pointnum.append(inst_idx_i[0].size)
-            cls_idx = inst_idx_i[0][0]
-            instance_cls.append(semantic_label[cls_idx])
-        pt_offset_label = pt_mean - xyz
-        return instance_num, instance_pointnum, instance_cls, pt_offset_label
-
-    # CLASSICAL DATA AUGMENTATIONS HERE IMPLEMENTED AS A SINGLE MATRIX MULTIPLICATION
-    def dataAugment(self, xyz, jitter=False, flip=False, rot=False, prob=1.0):
-        m = np.eye(3)
-        if jitter and np.random.rand() < prob:
-            m += np.random.randn(3, 3) * 0.1 # ADD NORMALLY DISTRIBUTED VALUES TO IDENTITY MATRIX IF RANDOM NUMBER IS SMALLER THAN PROB (ALWAYS IF PROB=1)
-        if flip and np.random.rand() < prob:
-            m[0][0] *= np.random.randint(0, 2) * 2 - 1 # RANDOM FLIP OF X COORDINATE (SAME CONDITION AS ABOVE)
-        if rot and np.random.rand() < prob:
-            theta = np.random.rand() * 2 * math.pi
-            m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0], # RANDOM ROTATION (SAME CONDITION AS ABOVE)
-                              [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
-
-        return np.matmul(xyz, m)
-
-
-    # TRAINING TRANSFORMATIONS
-    def transform_train(self, xyz, semantic_label, instance_label, instance_label_original, aug_prob=1.0):
-
-        # APPLY NORMAL DATA AUGMENTATIONS
-        xyz_middle = self.dataAugment(xyz, True, True, True, aug_prob)
-
-        # SCALE ORIGINAL VALUES WITH 50
-        xyz = xyz_middle * self.voxel_cfg.scale
-
-        # APPLY ELASTIC TRANSFORMATION
-        # if np.random.rand() < aug_prob:
-        #     xyz = self.elastic(xyz, 6 * self.voxel_cfg.scale // 50, 40 * self.voxel_cfg.scale / 50)
-        #     xyz = self.elastic(xyz, 20 * self.voxel_cfg.scale // 50,
-        #                        160 * self.voxel_cfg.scale / 50)
-        # xyz_middle = xyz / self.voxel_cfg.scale
-
-        # MAKE SCALED POINTS HAVE ALL POSITIVE VALUES
-        xyz = xyz - xyz.min(0)
-
-        return xyz, xyz_middle, semantic_label, instance_label, instance_label_original
-
-    # ALSO TRANSFORMATIONS BUT LESS THAN DURING TRAINING
-    def transform_test(self, xyz, semantic_label, instance_label, instance_label_original):
-
-        xyz_middle = self.dataAugment(xyz, False, False, False)
-        xyz = xyz_middle * self.voxel_cfg.scale
-        xyz = xyz - xyz.min(0)
-        return xyz, xyz_middle, semantic_label, instance_label, instance_label_original
-
-    def __getitem__(self, index):
-        data_path = self.data_paths[index]
-        data = self.load(data_path)
-
-        # some temporary stuff
-        # if len(data) == 3: 
-        #     data = data + (np.ones(len(data[1])), )
-        
-        # data = list(data)
-        # data[0] = data[0] / 5
-        # data = tuple(data)
-        #######################################
-
-        data = self.transform_train(*data) if self.training else self.transform_test(*data)
-        if data is None:
-            return None
-        xyz, xyz_middle, semantic_label, instance_label, instance_label_original = data # XYZ MIDDLE ARE THE POINTS ON WHICH STANDARD DATA TRANSFORMATIONS WERE APPLIED (but only select cropped indices); ON XYZ ALSO ELASTIC, CROPPING, SCALING AND SHIFTING ARE APPLIED SUCH THAT ALL VALUES ARE POSITIVE
-        info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label) # GET ALL INSTANCE RELATED INFO (SEE ABOVE)
-        inst_num, inst_pointnum, inst_cls, pt_offset_label = info
-        coord = torch.from_numpy(xyz).long()
-        coord_float = torch.from_numpy(xyz_middle)
-
-        semantic_label = torch.from_numpy(semantic_label)
-        instance_label = torch.from_numpy(instance_label)
-        instance_label_original = torch.from_numpy(instance_label_original)
-        pt_offset_label = torch.from_numpy(pt_offset_label)
-        scan_id = [data_path.replace(self.data_root, "").replace(".pth", "").replace("/", "")]
-
-        return (scan_id, coord, coord_float, semantic_label, instance_label, instance_label_original, inst_num,
-                inst_pointnum, inst_cls, pt_offset_label)
-
-        # coord: coordinates of fully augmented data (scaled and forced to non float values and elastically transformed compared to coord_float)
-        # coord_float: basically contains the original values only with jitter random rotate and random flip
-        # semantic_label: semantic label of augmented example (13 possibilities here i think)
-        # instance_label: instance labels in the form -100, 1, 2, 3... of the example
-        # instance_num: number of instances in example (background excluded)
-        # inst_pointnum: list of point numbers for each instance in example (background is not included in this list)
-        # ins_cls: list of semantic class for each instance (background excluded)
-        # pt_offset_label: offset label for each point (three dimensional)
 
     def collate_fn(self, batch):
         scan_ids = []
@@ -217,10 +208,10 @@ class TreeDataset(Dataset):
         # this is just for code compatibility, does not contain any information
         feats = torch.zeros(len(coords), 3)
 
+        spatial_shape = coords.max(0)[0][1:].numpy() + 1
 
-        spatial_shape = np.clip(
-            coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
         voxel_coords, v2p_map, p2v_map = voxelization_idx(coords, batch_id)
+
         return {
             'scan_ids': scan_ids,
             'coords': coords,

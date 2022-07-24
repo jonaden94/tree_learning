@@ -21,7 +21,6 @@ class SoftGroup(nn.Module):
                  semantic_only=False,
                  semantic_classes=20,
                  instance_classes=18,
-                 sem2ins_classes=[],
                  ignore_label=-100,
                  grouping_cfg=None,
                  instance_voxel_cfg=None,
@@ -29,12 +28,9 @@ class SoftGroup(nn.Module):
                  test_cfg=None,
                  fixed_modules=[]):
         super().__init__()
-        self.channels = channels
-        self.num_blocks = num_blocks
         self.semantic_only = semantic_only
         self.semantic_classes = semantic_classes
         self.instance_classes = instance_classes
-        self.sem2ins_classes = sem2ins_classes
         self.ignore_label = ignore_label
         self.grouping_cfg = grouping_cfg
         self.instance_voxel_cfg = instance_voxel_cfg
@@ -134,11 +130,10 @@ class SoftGroup(nn.Module):
             proposals_idx, proposals_offset = self.forward_grouping(semantic_scores, pt_offsets,
                                                                     batch_idxs, coords_float,
                                                                     self.grouping_cfg)
-            # randomly selects mx_proposal_num proposals if too many proposals in batch (I guess cause of memory constraint or something, not really relevant for me)
-            if proposals_offset.shape[0] > self.train_cfg.max_proposal_num:
-                proposals_offset = proposals_offset[:self.train_cfg.max_proposal_num + 1]
-                proposals_idx = proposals_idx[:proposals_offset[-1]]
-                assert proposals_idx.shape[0] == proposals_offset[-1]
+            
+            # assert that number of proposals does not explode for some reason
+            assert proposals_offset.shape[0] < self.train_cfg.max_proposal_num, "For some reason there is a huge number of proposals"
+            
             # voxel features (<npoints in proposals x 32): contains features of voxels derived from originally proposed points; inst_map (npoints in proposals), maps voxels back to points
             inst_feats, inst_map = self.clusters_voxelization(
                 proposals_idx,
@@ -194,8 +189,7 @@ class SoftGroup(nn.Module):
                          semantic_scores,
                          pt_offsets,
                          batch_idxs,
-                         coords_float,
-                         grouping_cfg=None):
+                         coords_float):
         proposals_idx_list = []
         proposals_offset_list = []
         batch_size = batch_idxs.max() + 1
@@ -378,7 +372,7 @@ class SoftGroup(nn.Module):
     ###############################################################################################
 
 
-    # only works with batch size 1; returns ground truths for all values of interest and corresponding # TODO
+    # only works with batch size 1; returns ground truths for all values of interest and corresponding
     @cuda_cast
     def forward_test(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
                      semantic_labels, instance_labels, instance_labels_original, pt_offset_labels, spatial_shape, batch_size,
@@ -412,7 +406,7 @@ class SoftGroup(nn.Module):
             # list of length nproposals (contains scan_id, class prediction, score prediction and the mask (length of total number of points in chunk) in a weird format)
             pred_instances = self.get_instances(scan_ids[0], proposals_idx, semantic_scores,
                                                 cls_scores, iou_scores, mask_scores)
-                                                
+
             # length of total number of points in a chunk (instance labels in another format)
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
 
@@ -429,7 +423,7 @@ class SoftGroup(nn.Module):
         semantic_pred = semantic_scores.max(1)[1] # semantic prediction of all points
         cls_pred_list, score_pred_list, mask_pred_list = [], [], []
         for i in range(self.instance_classes):
-            if i in self.sem2ins_classes:
+            if i in self.grouping_cfg.ignore_classes:
                 cls_pred = cls_scores.new_tensor([i + 1], dtype=torch.long)
                 score_pred = cls_scores.new_tensor([1.], dtype=torch.float32)
                 mask_pred = (semantic_pred == i)[None, :].int() # mask_pred has lenght of total number of points in chunk (contains 0 and 1). 1's indicate which points belong to final masked instance

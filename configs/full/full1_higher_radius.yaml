@@ -1,6 +1,6 @@
 model:
   # LEAVE UNCHANGED
-  semantic_only: True # only train backbone 
+  semantic_only: False # only train backbone 
   semantic_classes: 2 # number of semantic classes
   instance_classes: 2 # number of instance classes
   ignore_label: -100 # this does not occur for me
@@ -18,11 +18,11 @@ model:
 
     # CHANGEABLE
     score_thr: 0.2 # min score to use point in grouping
-    radius: 0.04 # grouping radius
-
+    radius: 0.2 # grouping radius
+    
   instance_voxel_cfg:
     # CHANGEABLE (according to scale of backbone training)
-    scale: 20 # same as scale in train and test --> Make sure not to make voxel size smaller than when features were extracted
+    scale: 20 # same as scale in voxel_cfg --> Make sure not to make voxel size smaller than when features were extracted
     spatial_shape: 20 # Spatial shape of voxelized proposal --> 20 x 20 x 20
 
   train_cfg:
@@ -31,13 +31,13 @@ model:
 
     # CHANGEABLE
     pos_iou_thr: 0.5 # iou to determine whether proposal is a positive sample
-
+    
   test_cfg:
     # LEAVE UNCHANGED FOR NOW
     cls_score_thr: 0.001 # discard when certainty score below
     mask_score_thr: -0.5 # mask out when mask_score below (seems to not happen)
     min_npoint: 100 # minimum number of points for each instance
-  fixed_modules: [] # modules whose parameters are not updated
+  fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear'] # modules whose parameters are not updated
 
 data:
   train:
@@ -61,16 +61,16 @@ dataloader:
 
 optimizer:
   type: 'Adam'
-  lr: 0.002
+  lr: 0.002 # reduced learning rate by factor 1/2 since batch_size reduced by factor 2
 
 save_cfg:
   semantic: True
   offset: True
-  instance: False
+  instance: True
 
 fp16: False
 epochs: 40
 step_epoch: 0
 save_freq: 2
-pretrain: './hais_ckpt_spconv2.pth'
+pretrain: 'work_dirs/sem1_lessvoxel/latest.pth'
 work_dir: ''
